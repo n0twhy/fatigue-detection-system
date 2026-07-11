@@ -1,0 +1,12 @@
+# 源码运行依赖（在一个干净的 Python 3.8~3.11 环境里装）：
+#     pip install -r requirements.txt
+#
+# mediapipe 会自动带上匹配的 numpy 和 opencv，所以这里不单独钉它们，
+# 交给 pip 解析以免版本打架。
+#
+# 打包成 exe 另需 pyinstaller，见 fatigue_system/packaging/requirements-app.txt。
+
+mediapipe==0.10.8
+PyQt5>=5.15,<5.16
+scipy
+PyYAML

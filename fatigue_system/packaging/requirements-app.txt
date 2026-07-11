@@ -1,0 +1,17 @@
+# 疲劳检测软件（给同学用的独立版）运行/打包依赖
+# ---------------------------------------------------------------------------
+# 这份清单只列软件本体需要的东西，不含 torch / matplotlib / rPPG-Toolbox
+# （那些只有开发者跑 M5 离线实验才用）。在一个全新的 Python 环境里装：
+#     pip install -r requirements-app.txt
+#
+# 说明：mediapipe 会自动带上匹配版本的 numpy 和 opencv-contrib-python，
+# 所以这里不单独钉它们，交给 pip 解析，避免版本打架。
+# 打包用的 Python 建议 3.8~3.11（和开发一致，mediapipe 0.10.8 支持范围内）。
+
+mediapipe==0.10.8
+PyQt5>=5.15,<5.16
+scipy
+PyYAML
+
+# 仅打 exe 时需要（运行不需要）
+pyinstaller>=6.0

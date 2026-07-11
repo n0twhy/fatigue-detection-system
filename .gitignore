@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 运行产物：检测 CSV、日志、自动生成的报警音
+outputs/
+*.csv
+alarm.wav
+
+# 打包产物
+build/
+dist/
+build_venv/
+*.manifest
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

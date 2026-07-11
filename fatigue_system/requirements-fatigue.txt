@@ -1,0 +1,31 @@
+# =============================================================================
+# 疲劳检测系统额外依赖（在 conda 环境 rppg-toolbox 下安装）
+# -----------------------------------------------------------------------------
+# 规则：仅列出 rPPG-Toolbox 环境中"尚未安装"的新增依赖，避免重复安装破坏
+# toolbox 既有版本。安装命令：
+#     conda activate rppg-toolbox
+#     pip install -r fatigue_system/requirements-fatigue.txt
+# =============================================================================
+
+# --- M0：图形界面 -----------------------------------------------------------
+PyQt5>=5.15,<5.16            # 六区 GUI 主窗口（M0 视频预览起）
+
+# --- M1：人脸关键点 ---------------------------------------------------------
+# 安装方式（关键）：为避免 mediapipe 拉入 opencv-contrib-python 或升级
+# numpy/protobuf 而破坏 toolbox，采用受控安装——先 --no-deps 装本体，再补装
+# 下列纯 Python 依赖：
+#     pip install "mediapipe==0.10.8" --no-deps
+#     pip install attrs flatbuffers absl-py sounddevice
+# 说明：mediapipe 0.10.8 的 protobuf 约束为 >=3.11,<4，与 toolbox 现有 3.20.3
+# 兼容；复用环境已有的 opencv-python 4.5.2，不安装 opencv-contrib-python。
+mediapipe==0.10.8            # MediaPipe FaceMesh 468 关键点（--no-deps 安装）
+attrs                       # mediapipe 运行依赖
+flatbuffers                 # mediapipe 运行依赖
+absl-py                     # mediapipe 运行依赖
+sounddevice                 # mediapipe 运行依赖（仅音频子模块用，本项目不触发）
+
+# =============================================================================
+# 以下包 rPPG-Toolbox 环境已提供，"请勿"通过本文件重复安装（仅作记录）：
+#   numpy, opencv-python, scipy, pandas, PyYAML, matplotlib,
+#   torch, torchvision                （Part A 深度 rPPG 实验复用）
+# =============================================================================
