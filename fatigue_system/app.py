@@ -200,13 +200,12 @@ def _fix_mediapipe_unicode_path() -> None:
     meipass = getattr(sys, "_MEIPASS", "")
     if not meipass:
         return
-    print("[诊断] _MEIPASS =", meipass, "| 纯ASCII =", _is_ascii(meipass))
     if _is_ascii(meipass):
-        return
+        return    # 路径本身就是 ASCII，mediapipe 不会有问题
 
     import mediapipe.python.solution_base as _sb
 
-    # 方案1：Windows 短路径（8.3 命名，全 ASCII）
+    # 方案1：Windows 短路径（8.3 命名，全 ASCII）——多数系统盘可用
     try:
         import ctypes
         buf = ctypes.create_unicode_buffer(32768)
@@ -215,13 +214,12 @@ def _fix_mediapipe_unicode_path() -> None:
             if _is_ascii(short):
                 os.chdir(short)
                 _sb.__file__ = os.path.join(short, "mediapipe", "python", "solution_base.py")
-                print("[诊断] 用短路径修复：", short)
                 return
-            print("[诊断] 短路径仍含非ASCII：", short)
-    except Exception as exc:
-        print("[诊断] 短路径方案异常：", exc)
+    except Exception:
+        pass
 
-    # 方案2：把 mediapipe/modules 复制到纯 ASCII 目录
+    # 方案2：短路径不可用（8.3 被禁用）时，把模型目录复制到纯 ASCII 目录
+    # （Public 一般可写且是 ASCII），一次性复制、之后复用。
     try:
         import shutil
         base = os.environ.get("PUBLIC") or os.environ.get("ProgramData") or "C:\\"
@@ -232,9 +230,9 @@ def _fix_mediapipe_unicode_path() -> None:
         if not os.path.isdir(dst_mods):
             shutil.copytree(os.path.join(meipass, "mediapipe", "modules"), dst_mods)
         _sb.__file__ = os.path.join(dst, "mediapipe", "python", "solution_base.py")
-        print("[诊断] 复制模型到 ASCII 目录修复：", dst)
     except Exception as exc:
-        print("[诊断] ASCII 复制方案失败：", exc)
+        print("[提示] 中文路径兼容处理失败，若无法启动请把程序放到纯英文路径下："
+              "{}".format(exc), file=sys.stderr)
 
 
 def main(argv=None) -> int:

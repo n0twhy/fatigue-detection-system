@@ -41,20 +41,7 @@ jobs:
       - name: 打包
         run: pyinstaller --noconfirm fatigue_system/packaging/app.spec
 
-      - name: 冒烟测试 A（ASCII 路径）
-        continue-on-error: true
-        shell: cmd
-        run: |
-          chcp 65001
-          cd dist\FatigueDetection
-          set QT_QPA_PLATFORM=offscreen
-          set PYTHONUTF8=1
-          echo ===== A: ASCII 路径 =====
-          FatigueDetection.exe --selftest 2
-          echo A_退出码: %ERRORLEVEL%
-
-      - name: 冒烟测试 B（中文路径，复现用户中文用户名场景）
-        continue-on-error: true
+      - name: 冒烟测试（在中文路径下离屏跑 exe，验证能正常启动；失败则构建失败）
         shell: cmd
         run: |
           chcp 65001
@@ -63,9 +50,8 @@ jobs:
           cd "测试_中文路径\FatigueDetection"
           set QT_QPA_PLATFORM=offscreen
           set PYTHONUTF8=1
-          echo ===== B: 中文路径 =====
           FatigueDetection.exe --selftest 2
-          echo B_退出码: %ERRORLEVEL%
+          if errorlevel 1 (echo 冒烟测试失败 & exit /b 1) else (echo 冒烟测试通过)
 
       - name: 压缩成品
         run: Compress-Archive -Path dist\* -DestinationPath FatigueDetection-Windows.zip

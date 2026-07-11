@@ -59,8 +59,7 @@ exe = EXE(
     pyz, a.scripts, [],
     exclude_binaries=True,
     name="FatigueDetection",
-    console=True,                       # 调试期临时开：双击会弹黑窗口，崩溃时能看到报错。
-                                        # 确认能正常运行后改回 False 出最终版。
+    console=False,                      # 图形程序，双击不弹黑色命令行窗口
     icon=None,                          # 有图标可在此填 .ico 路径
 )
 coll = COLLECT(
