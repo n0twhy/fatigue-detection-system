@@ -181,10 +181,17 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     if _FROZEN:
-        # 打包环境诊断：确认 mediapipe 模型目录是否被正确打进 exe（排查它
-        # 的 FileNotFoundError 用；确认无误后可删）。
-        _mp_modules = os.path.join(getattr(sys, "_MEIPASS", ""), "mediapipe", "modules")
-        print("[调试] mediapipe/modules 是否存在：", os.path.isdir(_mp_modules))
+        # 关键修复：mediapipe 用 os.path.abspath(__file__)[:-3] 推它的资源根，
+        # 打包后这个路径依赖当前工作目录——从 exe 文件夹启动会去
+        # "<exe目录>/mediapipe/modules" 找模型，而文件其实在 _internal 下，
+        # 差一层导致 FileNotFoundError。把工作目录切到 _internal（_MEIPASS），
+        # mediapipe 就能按 "mediapipe/modules/..." 正确找到。
+        # 注意：本程序读配置/写 CSV 都用绝对路径，切换工作目录不受影响。
+        meipass = getattr(sys, "_MEIPASS", "")
+        if meipass:
+            os.chdir(meipass)
+        print("[调试] mediapipe/modules 是否存在：",
+              os.path.isdir(os.path.join(meipass, "mediapipe", "modules")))
 
     if not os.path.isfile(args.config):
         print("[错误] 找不到配置文件：{}".format(args.config), file=sys.stderr)
