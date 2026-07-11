@@ -19,6 +19,11 @@ from PyQt5.QtWidgets import QLabel, QSizePolicy
 from fatigue_system.core.eye_features import LEFT_EYE_IDX, RIGHT_EYE_IDX
 from fatigue_system.core.mouth_features import MOUTH_H_IDX, MOUTH_V_PAIRS
 from fatigue_system.core.types import FrameFeatures
+from fatigue_system.ui import theme
+
+# HUD 配色（BGR）：青色主调，呼应界面点缀色
+_HUD_TEXT = (191, 212, 45)      # ≈ teal #2dd4bf
+_HUD_DIM = (150, 150, 140)
 
 
 def draw_landmarks(frame, landmarks_px) -> None:
@@ -43,14 +48,16 @@ def draw_hud(frame, ff: FrameFeatures, measured_fps: float) -> None:
     else:
         lines.append("FACE: NOT FOUND")
     lines.append("FPS : %.1f" % measured_fps)
-    x0, y0, line_h, box_w = 8, 8, 22, 250
-    box_h = line_h * len(lines) + 10
+    x0, y0, line_h, box_w = 10, 10, 22, 232
+    box_h = line_h * len(lines) + 12
     overlay = frame.copy()
-    cv2.rectangle(overlay, (x0, y0), (x0 + box_w, y0 + box_h), (0, 0, 0), -1)
-    cv2.addWeighted(overlay, 0.45, frame, 0.55, 0, frame)
+    cv2.rectangle(overlay, (x0, y0), (x0 + box_w, y0 + box_h), (18, 20, 14), -1)
+    cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
+    # 左侧青色竖条点缀
+    cv2.rectangle(frame, (x0, y0), (x0 + 3, y0 + box_h), _HUD_TEXT, -1)
     for i, text in enumerate(lines):
-        cv2.putText(frame, text, (x0 + 8, y0 + 20 + i * line_h),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 180), 1, cv2.LINE_AA)
+        cv2.putText(frame, text, (x0 + 12, y0 + 22 + i * line_h),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, _HUD_TEXT, 1, cv2.LINE_AA)
 
 
 class VideoWidget(QLabel):
@@ -61,8 +68,11 @@ class VideoWidget(QLabel):
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(640, 480)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setStyleSheet("background-color:#202020; color:#bbbbbb; font-size:15px;")
-        self.show_message("无视频源\n\n请在下方选择摄像头，或打开视频文件")
+        self.setStyleSheet(
+            "background-color:#05070a; color:{dim}; font-size:14px; "
+            "border:1px solid {border}; border-radius:12px;".format(
+                dim=theme.TEXT_MUTE, border=theme.BORDER))
+        self.show_message("无视频源\n\n请选择摄像头，或打开视频文件")
 
     def show_frame(self, frame_bgr) -> None:
         """显示一帧 BGR 图像（转 RGB → QPixmap，按控件大小等比缩放）。"""

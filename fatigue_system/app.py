@@ -270,6 +270,8 @@ def main(argv=None) -> int:
 
     app = QApplication(sys.argv[:1])
     _setup_cjk_font(app, config)  # 设置中文字体，避免界面方块乱码
+    from fatigue_system.ui import theme
+    app.setStyleSheet(theme.STYLESHEET)   # 深色现代主题
     window = MainWindow(config)
     window.show()
 

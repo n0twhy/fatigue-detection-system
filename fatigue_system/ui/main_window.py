@@ -31,10 +31,12 @@ from typing import Dict, Optional
 
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
-    QApplication, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QVBoxLayout, QWidget,
 )
 
+from fatigue_system.ui import theme
+from fatigue_system.ui.widgets import StatusPill
 from fatigue_system.io.video_source import VideoSource
 from fatigue_system.io.data_logger import DataLogger
 from fatigue_system.core.face_mesh import FaceMeshDetector
@@ -103,21 +105,23 @@ class MainWindow(QMainWindow):
     # ------------------------------- 界面搭建 --------------------------------
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("疲劳检测系统 — M3 多特征融合与预警")
-        self.resize(1280, 820)
+        self.setWindowTitle("疲劳检测系统 · Fatigue Monitor")
+        self.resize(1320, 860)
 
         central = QWidget(self)
         root = QVBoxLayout(central)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(5)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(12)
 
-        # 上部：左=① 视频，右=③ 等级 / ④ 预警 / ⑥ 记录
+        root.addWidget(self._build_header())
+
+        # 中部：左=视频，右=等级 / 预警 / 记录
         upper = QHBoxLayout()
-        upper.setSpacing(6)
+        upper.setSpacing(12)
         self._video = VideoWidget(self)
         upper.addWidget(self._video, stretch=3)
         right = QVBoxLayout()
-        right.setSpacing(6)
+        right.setSpacing(12)
         self._level_panel = LevelPanel(self)
         right.addWidget(self._level_panel)
         self._alarm_panel = AlarmPanel(self._config, self)
@@ -126,21 +130,21 @@ class MainWindow(QMainWindow):
         right.addWidget(self._log_panel, stretch=1)
         right_box = QWidget(self)
         right_box.setLayout(right)
-        right_box.setMinimumWidth(380)
-        right_box.setMaximumWidth(460)
+        right_box.setMinimumWidth(400)
+        right_box.setMaximumWidth(480)
         upper.addWidget(right_box, stretch=1)
         root.addLayout(upper, stretch=1)
 
-        # ② 特征参数区（三行）
+        # 特征磁贴区（放进卡片容器）
+        feat_card = QFrame(self)
+        feat_card.setObjectName("card")
+        feat_lay = QVBoxLayout(feat_card)
+        feat_lay.setContentsMargins(14, 12, 14, 12)
         self._features = FeaturePanel(self)
-        root.addWidget(self._features)
+        feat_lay.addWidget(self._features)
+        root.addWidget(feat_card)
 
-        # 状态栏行
-        self._status_label = QLabel("状态：未打开视频源", self)
-        self._status_label.setStyleSheet("color:#444; padding:2px;")
-        root.addWidget(self._status_label)
-
-        # ⑤ 操作控制区
+        # 操作控制区
         self._control = ControlPanel(self._vcfg, self)
         self._control.open_camera_requested.connect(self._on_open_camera)
         self._control.open_file_requested.connect(self._on_open_file)
@@ -150,7 +154,43 @@ class MainWindow(QMainWindow):
         self._control.stop_requested.connect(self._on_stop)
         root.addWidget(self._control)
 
+        # 底部细状态行
+        self._status_label = QLabel("未打开视频源", self)
+        self._status_label.setStyleSheet(
+            "color:{}; font-family:{}; font-size:11px; padding:2px;".format(
+                theme.TEXT_MUTE, theme.MONO))
+        root.addWidget(self._status_label)
+
         self.setCentralWidget(central)
+
+    def _build_header(self) -> QFrame:
+        """顶部应用头栏：logo 标记 + 标题 + 实时状态胶囊。"""
+        header = QFrame(self)
+        header.setObjectName("header")
+        header.setFixedHeight(66)
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(16, 10, 16, 10)
+        hl.setSpacing(12)
+
+        logo = QLabel("FM", header)
+        logo.setObjectName("logoMark")
+        logo.setFixedSize(42, 42)
+        hl.addWidget(logo)
+
+        titles = QVBoxLayout()
+        titles.setSpacing(1)
+        t1 = QLabel("疲劳检测系统", header)
+        t1.setObjectName("headerTitle")
+        t2 = QLabel("FATIGUE MONITORING SYSTEM", header)
+        t2.setObjectName("headerSub")
+        titles.addWidget(t1)
+        titles.addWidget(t2)
+        hl.addLayout(titles)
+        hl.addStretch(1)
+
+        self._pill = StatusPill(header)
+        hl.addWidget(self._pill)
+        return header
 
     def _auto_start(self) -> None:
         default_source = str(self._vcfg.get("default_source", "camera")).lower()
@@ -188,8 +228,9 @@ class MainWindow(QMainWindow):
         self._last_hrv = None
         self._fsm.reset()
         self._control.set_calibrate_enabled(True)
+        self._pill.set_status("已停止", theme.TEXT_MUTE)
         self._video.show_message("已停止\n\n请选择摄像头或打开视频文件")
-        self._status_label.setText("状态：已停止")
+        self._status_label.setText("已停止")
         self._features.set_frame_idle("逐帧：已停止")
         self._features.set_window_idle()
         self._level_panel.set_idle()
@@ -363,12 +404,18 @@ class MainWindow(QMainWindow):
     def _update_status(self, ts: float) -> None:
         w, h = self._source.frame_size
         kind_name = {"camera": "摄像头", "file": "视频文件"}.get(self._source.kind, "无")
-        rec = " | ● 记录中" if self._logger.active else ""
+        mfps = self._measured_fps()
+        recording = self._logger.active
+        # 顶栏胶囊：一眼看清源/帧率/是否记录
+        pill_text = "{kind} · {mfps:.0f} fps{rec}".format(
+            kind=kind_name, mfps=mfps, rec="  ● REC" if recording else "")
+        self._pill.set_status(pill_text,
+                              theme.LEVEL_COLORS[3] if recording else theme.LEVEL_COLORS[0])
+        # 底部细节
         self._status_label.setText(
-            "状态：{kind}『{desc}』 | {w}×{h} | 源帧率 {sfps:.1f}fps | 测得 {mfps:.1f}fps | "
-            "源内时间 {ts:.1f}s{rec}".format(
-                kind=kind_name, desc=self._source.source_desc, w=w, h=h,
-                sfps=self._source.fps, mfps=self._measured_fps(), ts=ts, rec=rec))
+            "{desc}  ·  {w}×{h}  ·  源 {sfps:.1f} / 测 {mfps:.1f} fps  ·  t = {ts:.1f}s".format(
+                desc=self._source.source_desc, w=w, h=h,
+                sfps=self._source.fps, mfps=mfps, ts=ts))
 
     # ------------------------------- 辅助方法 --------------------------------
 

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""②③④⑤⑥ 各功能面板（开发规格书 §4 / §6.12）。
+"""②③④⑤⑥ 各功能面板（开发规格书 §4 / §6.12），现代深色仪表盘风格。
 
-    FeaturePanel  ② 特征参数区：逐帧 / 滑窗 / 基线 三行
-    LevelPanel    ③ 疲劳等级区：四级 + 颜色（绿/黄/橙/红）+ 融合分 + 子分
+    FeaturePanel  ② 特征参数区：指标磁贴网格（逐帧 + 滑窗）+ 基线条
+    LevelPanel    ③ 疲劳等级区：主视觉等级 + 自绘评分条 + 子分磁贴
     AlarmPanel    ④ 预警提示区：状态横幅 + 重度报警弹窗 + 声音
     ControlPanel  ⑤ 操作控制区：摄像头下拉/视频文件/校准/记录/停止
     LogTablePanel ⑥ 数据记录区：滚动表格（与 CSV 落盘同节拍追加）
@@ -18,127 +18,164 @@ from typing import Dict, Optional
 
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QHeaderView,
-    QLabel, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout,
+    QHeaderView, QLabel, QMessageBox, QPushButton, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from fatigue_system.core.types import FrameFeatures, WindowFeatures, FatigueResult, LEVEL_NAMES
 from fatigue_system.io.video_source import list_cameras
+from fatigue_system.ui import theme
+from fatigue_system.ui.widgets import ScoreMeter, StatTile
 
 # 头部状态英文 → 中文（展示用）
 HEAD_STATE_CN = {"normal": "正常", "lowered": "低头", "tilted": "偏头", "nodding": "点头"}
 
-# 四级配色（③ 等级区背景 / ⑥ 表格等级列前景）：绿/黄/橙/红
-_LEVEL_COLORS = ("#2e7d32", "#f9a825", "#ef6c00", "#c62828")
+# 头部状态 → 颜色（正常绿，异常按轻重取橙/红）
+_HEAD_STATE_COLOR = {
+    "normal": theme.LEVEL_COLORS[0],
+    "lowered": theme.LEVEL_COLORS[2],
+    "tilted": theme.LEVEL_COLORS[2],
+    "nodding": theme.LEVEL_COLORS[3],
+}
 
 
 # ------------------------------ ② 特征参数区 ----------------------------------
 
 class FeaturePanel(QWidget):
-    """三行文字：逐帧指标 / 滑窗统计（含 HR/HRV 占位）/ 基线。"""
+    """指标磁贴网格：逐帧(EAR/MAR/头部) + 滑窗(PERCLOS/眨眼/闭眼/哈欠/点头/HR/HRV)。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(2)
-        self._frame_label = QLabel("逐帧：等待视频源…", self)
-        self._frame_label.setStyleSheet("color:#1a5; padding:2px; font-size:13px; background:#f2f7f2;")
-        self._window_label = QLabel("窗口：—", self)
-        self._window_label.setStyleSheet("color:#25a; padding:2px; font-size:13px; background:#eef2fb;")
-        self._calib_label = QLabel("基线：未校准（将使用默认阈值）", self)
-        self._calib_label.setStyleSheet("color:#a60; padding:2px; font-size:13px; background:#fbf6ee;")
-        for w in (self._frame_label, self._window_label, self._calib_label):
-            lay.addWidget(w)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(8)
+
+        title = QLabel("实时指标 · LIVE METRICS", self)
+        title.setObjectName("sectionTitle")
+        root.addWidget(title)
+
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        # (key, 标签, 是否等宽数字)
+        specs = [
+            ("ear", "EAR", True), ("mar", "MAR", True), ("head", "头部姿态", False),
+            ("perclos", "PERCLOS", True), ("blink", "眨眼/分", True),
+            ("closed", "最长闭眼", True), ("yawn", "哈欠", True),
+            ("nod", "点头", True), ("hr", "心率 HR", True), ("hrv", "HRV", True),
+        ]
+        self._tiles: Dict[str, StatTile] = {}
+        cols = 5
+        for i, (key, label, mono) in enumerate(specs):
+            tile = StatTile(label, mono=mono, value_px=19)
+            self._tiles[key] = tile
+            grid.addWidget(tile, i // cols, i % cols)
+        for c in range(cols):
+            grid.setColumnStretch(c, 1)
+        root.addLayout(grid)
+
+        self._baseline = QLabel("基线：未校准 · 使用默认阈值", self)
+        self._baseline.setObjectName("baseline")
+        root.addWidget(self._baseline)
 
     def update_frame(self, ff: FrameFeatures, head_state: str) -> None:
-        """更新逐帧行；head_state 为英文状态（本面板转中文）。"""
+        """更新逐帧磁贴（EAR/MAR/头部）；head_state 为英文状态。"""
         if not ff.face_found:
-            self._frame_label.setText("逐帧：未检测到人脸")
+            for k in ("ear", "mar", "head"):
+                self._tiles[k].set_value("—", theme.TEXT_MUTE)
             return
-        self._frame_label.setText(
-            "逐帧：EAR {ear:.3f}（左{le:.2f}/右{re:.2f}） | MAR {mar:.3f} | "
-            "俯仰 {p:+.1f}° 偏航 {y:+.1f}° 翻滚 {r:+.1f}° | 头部 {st}".format(
-                ear=ff.ear, le=ff.left_ear, re=ff.right_ear, mar=ff.mar,
-                p=ff.pitch, y=ff.yaw, r=ff.roll,
-                st=HEAD_STATE_CN.get(head_state, head_state)))
+        self._tiles["ear"].set_value("{:.3f}".format(ff.ear), theme.ACCENT)
+        self._tiles["mar"].set_value("{:.3f}".format(ff.mar), theme.ACCENT)
+        self._tiles["head"].set_value(
+            HEAD_STATE_CN.get(head_state, head_state),
+            _HEAD_STATE_COLOR.get(head_state, theme.TEXT))
 
     def update_window(self, wf: WindowFeatures) -> None:
-        """更新滑窗行（HR/HRV 缺失时显示 —，M4 起有值）。"""
-        hr = "{:.0f}".format(wf.hr) if wf.hr is not None else "—"
-        hrv = "{:.0f}".format(wf.hrv) if wf.hrv is not None else "—"
-        self._window_label.setText(
-            "窗口：PERCLOS {pc:.0%} | 眨眼 {bc}次·{br:.1f}次/分 | 最长闭眼 {cd:.1f}s | "
-            "哈欠 {yc}次{yf} | 头部 {hs} | 点头 {nd}次 | HR {hr} | HRV {hrv}".format(
-                pc=wf.perclos, bc=wf.blink_count, br=wf.blink_rate, cd=wf.eye_closed_dur,
-                yc=wf.yawn_count, yf="(进行中)" if wf.yawn_flag else "",
-                hs=HEAD_STATE_CN.get(wf.head_state, wf.head_state), nd=wf.nod_count,
-                hr=hr, hrv=hrv))
+        """更新滑窗磁贴（HR/HRV 缺失时显示 —，M4 起有值）。"""
+        self._tiles["perclos"].set_value("{:.0%}".format(wf.perclos))
+        self._tiles["blink"].set_value("{:.1f}".format(wf.blink_rate))
+        self._tiles["closed"].set_value("{:.1f}s".format(wf.eye_closed_dur))
+        yawn = "{}{}".format(wf.yawn_count, "•" if wf.yawn_flag else "")
+        self._tiles["yawn"].set_value(yawn)
+        self._tiles["nod"].set_value(str(wf.nod_count))
+        self._tiles["hr"].set_value(
+            "{:.0f}".format(wf.hr) if wf.hr is not None else "—",
+            theme.ACCENT_2 if wf.hr is not None else theme.TEXT_MUTE)
+        self._tiles["hrv"].set_value(
+            "{:.0f}".format(wf.hrv) if wf.hrv is not None else "—",
+            theme.TEXT if wf.hrv is not None else theme.TEXT_MUTE)
 
-    def set_window_idle(self, text: str = "窗口：—") -> None:
-        self._window_label.setText(text)
+    def set_window_idle(self, text: str = "") -> None:
+        for k in ("perclos", "blink", "closed", "yawn", "nod", "hr", "hrv"):
+            self._tiles[k].set_value("—", theme.TEXT_MUTE)
 
-    def set_frame_idle(self, text: str) -> None:
-        self._frame_label.setText(text)
+    def set_frame_idle(self, text: str = "") -> None:
+        for k in ("ear", "mar", "head"):
+            self._tiles[k].set_value("—", theme.TEXT_MUTE)
 
     def set_baseline_text(self, text: str) -> None:
-        """基线行由主窗口按校准状态提供文案（进行中/完成/失败）。"""
-        self._calib_label.setText(text)
+        self._baseline.setText(text)
 
 
 # ------------------------------ ③ 疲劳等级区 ----------------------------------
 
 class LevelPanel(QGroupBox):
-    """大字等级 + 背景配色 + 融合分 + 各子分明细。"""
+    """主视觉等级 + 自绘评分条 + 各子分磁贴。"""
 
     def __init__(self, parent=None):
-        super().__init__("③ 疲劳等级", parent)
+        super().__init__("疲劳等级 · LEVEL", parent)
         lay = QVBoxLayout(self)
-        self._level_label = QLabel("未开始", self)
-        self._level_label.setAlignment(Qt.AlignCenter)
-        self._level_label.setMinimumHeight(64)
-        self._level_label.setStyleSheet(
-            "background:#555; color:white; font-size:28px; font-weight:bold; border-radius:6px;")
-        lay.addWidget(self._level_label)
-        self._score_label = QLabel("融合分 S：—", self)
-        self._score_label.setStyleSheet("font-size:13px;")
-        lay.addWidget(self._score_label)
-        self._sub_label = QLabel("子分：—", self)
-        self._sub_label.setStyleSheet("font-size:12px; color:#555;")
-        self._sub_label.setWordWrap(True)
-        lay.addWidget(self._sub_label)
+        lay.setSpacing(10)
+
+        self._level = QLabel("待机", self)
+        self._level.setObjectName("heroLevel")
+        self._level.setAlignment(Qt.AlignCenter)
+        self._level.setStyleSheet("color:{};".format(theme.TEXT_MUTE))
+        lay.addWidget(self._level)
+
+        self._meter = ScoreMeter(self)
+        lay.addWidget(self._meter)
+
+        self._score = QLabel("融合分 —", self)
+        self._score.setAlignment(Qt.AlignCenter)
+        self._score.setStyleSheet(
+            "color:{}; font-family:{}; font-size:12px;".format(theme.TEXT_DIM, theme.MONO))
+        lay.addWidget(self._score)
+
+        subs = QHBoxLayout()
+        subs.setSpacing(8)
+        self._sub_tiles: Dict[str, StatTile] = {}
+        for key, label in [("eye", "眼"), ("mouth", "嘴"), ("head", "头"), ("physio", "生理")]:
+            tile = StatTile(label, mono=True, value_px=16)
+            self._sub_tiles[key] = tile
+            subs.addWidget(tile)
+        lay.addLayout(subs)
 
     def set_result(self, result: FatigueResult) -> None:
-        color = _LEVEL_COLORS[int(result.level) % len(_LEVEL_COLORS)]
-        self._level_label.setText(result.level_name)
-        self._level_label.setStyleSheet(
-            "background:{}; color:white; font-size:28px; font-weight:bold; border-radius:6px;".format(color))
-        self._score_label.setText("融合分 S：{:.3f}（EMA 平滑）".format(result.score))
+        color = theme.LEVEL_COLORS[int(result.level) % len(theme.LEVEL_COLORS)]
+        self._level.setText(result.level_name)
+        self._level.setStyleSheet("color:{};".format(color))
+        self._meter.set_score(result.score, int(result.level))
+        self._score.setText("融合分  {:.3f}".format(result.score))
         sub = result.sub_scores or {}
-
-        def _s(key):
+        for key, tile in self._sub_tiles.items():
             v = sub.get(key)
-            return "—" if v is None else "{:.2f}".format(v)
-        self._sub_label.setText("子分：眼 {} | 嘴 {} | 头 {} | 生理 {}".format(
-            _s("eye"), _s("mouth"), _s("head"), _s("physio")))
+            tile.set_value("—" if v is None else "{:.2f}".format(v),
+                           theme.TEXT_MUTE if v is None else theme.TEXT)
 
-    def set_idle(self, text: str = "未开始") -> None:
-        self._level_label.setText(text)
-        self._level_label.setStyleSheet(
-            "background:#555; color:white; font-size:28px; font-weight:bold; border-radius:6px;")
-        self._score_label.setText("融合分 S：—")
-        self._sub_label.setText("子分：—")
+    def set_idle(self, text: str = "待机") -> None:
+        self._level.setText(text)
+        self._level.setStyleSheet("color:{};".format(theme.TEXT_MUTE))
+        self._meter.set_score(0.0, 0)
+        self._score.setText("融合分 —")
+        for tile in self._sub_tiles.values():
+            tile.set_value("—", theme.TEXT_MUTE)
 
 
 # ------------------------------ ④ 预警提示区 ----------------------------------
 
 class _AlarmSound:
-    """报警声音：优先 QSound 播放自动生成的提示 wav，失败退回系统蜂鸣。
-
-    wav 不存在时用 wave 模块合成（880Hz 正弦 0.6s，双声调），
-    避免往仓库里塞二进制资源。
-    """
+    """报警声音：优先 QSound 播放自动生成的提示 wav，失败退回系统蜂鸣。"""
 
     def __init__(self, wav_path: str):
         self._qsound = None
@@ -147,7 +184,7 @@ class _AlarmSound:
             self._ensure_wav(wav_path)
             self._qsound = QSound(wav_path)
         except Exception:
-            self._qsound = None   # 无 QtMultimedia / 无音频后端 → 退回蜂鸣
+            self._qsound = None
 
     @staticmethod
     def _ensure_wav(path: str) -> None:
@@ -157,7 +194,6 @@ class _AlarmSound:
         rate = 44100
         import math
         frames = bytearray()
-        # 两段音调（880Hz→660Hz）各 0.3s，首尾 10ms 淡入淡出防爆音
         for freq in (880.0, 660.0):
             n = int(rate * 0.3)
             for i in range(n):
@@ -185,8 +221,13 @@ class _AlarmSound:
 class AlarmPanel(QGroupBox):
     """预警横幅 + 重度报警弹窗（非模态）+ 声音（上升沿播放，持续期重复）。"""
 
+    _OK_STYLE = ("background-color:{}; color:{}; border:1px solid {}; border-radius:8px; "
+                 "padding:10px; font-size:14px;").format("#0f2a1e", theme.LEVEL_COLORS[0], "#1c3d2b")
+    _ALARM_STYLE = ("background-color:{}; color:#ffffff; border:1px solid {}; border-radius:8px; "
+                    "padding:10px; font-size:14px; font-weight:bold;").format("#3d1418", theme.LEVEL_COLORS[3])
+
     def __init__(self, cfg: Dict, parent=None):
-        super().__init__("④ 预警提示", parent)
+        super().__init__("实时预警 · ALERT", parent)
         alarm_cfg = (cfg or {}).get("alarm", {})
         self._sound_enable = bool(alarm_cfg.get("sound_enable", True))
         self._popup_enable = bool(alarm_cfg.get("popup_enable", True))
@@ -196,14 +237,13 @@ class AlarmPanel(QGroupBox):
         self._sound = _AlarmSound(wav) if self._sound_enable else None
 
         lay = QVBoxLayout(self)
-        self._banner = QLabel("正常监测中", self)
+        self._banner = QLabel("● 正常监测中", self)
         self._banner.setAlignment(Qt.AlignCenter)
-        self._banner.setMinimumHeight(40)
-        self._banner.setStyleSheet(
-            "background:#e8f5e9; color:#2e7d32; font-size:15px; border-radius:4px;")
+        self._banner.setStyleSheet(self._OK_STYLE)
         lay.addWidget(self._banner)
-        self._info = QLabel("报警次数：0", self)
-        self._info.setStyleSheet("font-size:12px; color:#555;")
+        self._info = QLabel("累计报警  0", self)
+        self._info.setStyleSheet(
+            "color:{}; font-family:{}; font-size:12px;".format(theme.TEXT_DIM, theme.MONO))
         lay.addWidget(self._info)
 
         self._active = False
@@ -212,32 +252,28 @@ class AlarmPanel(QGroupBox):
         self._popup: Optional[QMessageBox] = None
 
     def update_alarm(self, active: bool, level_name: str) -> None:
-        """每个融合节拍调用：处理横幅/弹窗/声音的沿触发与重复提醒。"""
-        if active and not self._active:          # 上升沿：触发报警
+        if active and not self._active:
             self._alarm_count += 1
-            self._banner.setText("⚠ 重度疲劳报警！请立即休息")
-            self._banner.setStyleSheet(
-                "background:#c62828; color:white; font-size:15px; font-weight:bold; border-radius:4px;")
-            self._info.setText("报警次数：{}".format(self._alarm_count))
+            self._banner.setText("⚠  重度疲劳报警 · 请立即休息")
+            self._banner.setStyleSheet(self._ALARM_STYLE)
+            self._info.setText("累计报警  {}".format(self._alarm_count))
             self._play_sound()
             self._show_popup(level_name)
-        elif active:                              # 持续报警：按间隔重复提示音
+        elif active:
             if (self._last_sound_t is not None
                     and monotonic() - self._last_sound_t >= self._repeat_sec):
                 self._play_sound()
-        elif self._active:                        # 下降沿：解除
-            self._banner.setText("报警已解除，继续监测")
-            self._banner.setStyleSheet(
-                "background:#e8f5e9; color:#2e7d32; font-size:15px; border-radius:4px;")
+        elif self._active:
+            self._banner.setText("● 报警已解除 · 继续监测")
+            self._banner.setStyleSheet(self._OK_STYLE)
             if self._popup is not None:
                 self._popup.hide()
         self._active = active
 
     def set_idle(self) -> None:
         self._active = False
-        self._banner.setText("正常监测中")
-        self._banner.setStyleSheet(
-            "background:#e8f5e9; color:#2e7d32; font-size:15px; border-radius:4px;")
+        self._banner.setText("● 正常监测中")
+        self._banner.setStyleSheet(self._OK_STYLE)
         if self._popup is not None:
             self._popup.hide()
 
@@ -258,7 +294,7 @@ class AlarmPanel(QGroupBox):
             self._popup.setIcon(QMessageBox.Warning)
             self._popup.setWindowTitle("疲劳报警")
             self._popup.setStandardButtons(QMessageBox.Ok)
-            self._popup.setWindowModality(Qt.NonModal)   # 非模态：不阻塞帧循环
+            self._popup.setWindowModality(Qt.NonModal)
         self._popup.setText("检测到持续{}状态！\n\n请立即停止当前作业并休息。".format(level_name))
         self._popup.show()
 
@@ -271,7 +307,7 @@ class ControlPanel(QWidget):
     open_camera_requested = pyqtSignal(int)
     open_file_requested = pyqtSignal(str)
     calibrate_requested = pyqtSignal()
-    record_toggled = pyqtSignal(bool)       # True=开始记录 False=停止并保存
+    record_toggled = pyqtSignal(bool)
     landmarks_toggled = pyqtSignal(bool)
     stop_requested = pyqtSignal()
 
@@ -280,9 +316,9 @@ class ControlPanel(QWidget):
         self._vcfg = vcfg or {}
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
+        lay.setSpacing(8)
 
-        lay.addWidget(QLabel("摄像头：", self))
+        lay.addWidget(QLabel("摄像头", self))
         self._camera_combo = QComboBox(self)
         self._camera_combo.setMinimumWidth(150)
         lay.addWidget(self._camera_combo)
@@ -292,17 +328,19 @@ class ControlPanel(QWidget):
         self._btn_camera = QPushButton("打开摄像头", self)
         self._btn_camera.clicked.connect(self._emit_camera)
         lay.addWidget(self._btn_camera)
-        self._btn_file = QPushButton("打开视频文件…", self)
+        self._btn_file = QPushButton("打开视频文件", self)
         self._btn_file.clicked.connect(self._pick_file)
         lay.addWidget(self._btn_file)
         self._btn_calib = QPushButton("开始校准", self)
+        self._btn_calib.setProperty("accent", True)
         self._btn_calib.clicked.connect(self.calibrate_requested.emit)
         lay.addWidget(self._btn_calib)
         self._btn_record = QPushButton("开始记录", self)
+        self._btn_record.setProperty("accent", True)
         self._btn_record.setCheckable(True)
         self._btn_record.toggled.connect(self._on_record_toggled)
         lay.addWidget(self._btn_record)
-        self._chk_landmarks = QCheckBox("显示关键点", self)
+        self._chk_landmarks = QCheckBox("关键点", self)
         self._chk_landmarks.setChecked(True)
         self._chk_landmarks.stateChanged.connect(
             lambda s: self.landmarks_toggled.emit(bool(s)))
@@ -312,10 +350,7 @@ class ControlPanel(QWidget):
         self._btn_stop.clicked.connect(self.stop_requested.emit)
         lay.addWidget(self._btn_stop)
 
-    # ------------------------------ 对外方法 ---------------------------------
-
     def refresh_cameras(self) -> None:
-        """枚举摄像头填充下拉框；无摄像头时禁用相关控件。"""
         self._camera_combo.clear()
         cameras = list_cameras()
         if cameras:
@@ -338,20 +373,16 @@ class ControlPanel(QWidget):
             self._camera_combo.setCurrentIndex(pos)
 
     def request_open_camera(self) -> None:
-        """程序化触发"打开摄像头"（自动启动用）。"""
         self._emit_camera()
 
     def set_calibrate_enabled(self, enabled: bool) -> None:
         self._btn_calib.setEnabled(enabled)
 
     def set_recording(self, recording: bool) -> None:
-        """同步记录按钮状态（不触发信号）。"""
         self._btn_record.blockSignals(True)
         self._btn_record.setChecked(recording)
         self._btn_record.setText("停止并保存" if recording else "开始记录")
         self._btn_record.blockSignals(False)
-
-    # ------------------------------ 内部槽 -----------------------------------
 
     def _emit_camera(self) -> None:
         index = self._camera_combo.currentData()
@@ -377,19 +408,21 @@ class LogTablePanel(QGroupBox):
     """滚动表格：与 CSV 落盘同节拍追加一行，超出上限后从头部丢弃。"""
 
     _COLUMNS = ["时间(s)", "EAR", "MAR", "PERCLOS", "眨眼/分", "哈欠", "头部", "评分", "等级", "报警"]
-    _MAX_ROWS = 500   # 界面显示上限（完整数据在 CSV 里，此处仅防内存无限涨）
+    _MAX_ROWS = 500
 
     def __init__(self, parent=None):
-        super().__init__("⑥ 数据记录", parent)
+        super().__init__("检测记录 · LOG", parent)
         lay = QVBoxLayout(self)
-        self._hint = QLabel("未在记录（点「开始记录」落盘 CSV 并在此显示）", self)
-        self._hint.setStyleSheet("font-size:12px; color:#777;")
+        self._hint = QLabel("未在记录 · 点「开始记录」落盘 CSV 并在此显示", self)
+        self._hint.setStyleSheet("color:{}; font-size:12px;".format(theme.TEXT_MUTE))
         lay.addWidget(self._hint)
         self._table = QTableWidget(0, len(self._COLUMNS), self)
         self._table.setHorizontalHeaderLabels(self._COLUMNS)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._table.setShowGrid(False)
+        self._table.setAlternatingRowColors(True)
         lay.addWidget(self._table)
 
     def set_hint(self, text: str) -> None:
@@ -410,8 +443,12 @@ class LogTablePanel(QGroupBox):
             "{:.3f}".format(result.score), LEVEL_NAMES[int(result.level)],
             "是" if result.alarm else "",
         ]
+        level_color = theme.LEVEL_COLORS[int(result.level) % len(theme.LEVEL_COLORS)]
         for col, text in enumerate(values):
             item = QTableWidgetItem(text)
             item.setTextAlignment(Qt.AlignCenter)
+            if col == 8:      # 等级列上色
+                from PyQt5.QtGui import QColor
+                item.setForeground(QColor(level_color))
             self._table.setItem(row, col, item)
         self._table.scrollToBottom()
