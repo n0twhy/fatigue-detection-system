@@ -35,14 +35,30 @@ _FROZEN = getattr(sys, "frozen", False)
 # 不能往里写 CSV/日志）；源码运行时用仓库根。CSV、alarm.wav 等都落到这里。
 _APP_DIR = os.path.dirname(sys.executable) if _FROZEN else _ROOT
 
-# 默认配置文件路径：exe 版优先读 exe 旁边的 config.yaml（方便同学不改代码就调参），
-# 没有则回退到打包进去的那份；源码运行直接用包内 config.yaml。
-if _FROZEN:
-    _external_cfg = os.path.join(_APP_DIR, "config.yaml")
-    DEFAULT_CONFIG_PATH = _external_cfg if os.path.isfile(_external_cfg) \
-        else os.path.join(_HERE, "config.yaml")
-else:
-    DEFAULT_CONFIG_PATH = os.path.join(_HERE, "config.yaml")
+def _find_default_config() -> str:
+    """定位默认配置文件，兼顾源码运行和打包成 exe 两种情况。
+
+    打包后不能用 __file__ 推目录（会落到 _internal 根、找不到 config），
+    改用 PyInstaller 的资源根 sys._MEIPASS。按优先级找第一个存在的：
+      1) exe 旁边的 config.yaml —— 同学不改代码就能调参，最高优先；
+      2) 打包进 _internal/fatigue_system/config.yaml —— spec 放的位置；
+      3) 源码运行时的包内 config.yaml。
+    """
+    candidates = []
+    if _FROZEN:
+        candidates.append(os.path.join(_APP_DIR, "config.yaml"))
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(os.path.join(meipass, "fatigue_system", "config.yaml"))
+            candidates.append(os.path.join(meipass, "config.yaml"))
+    candidates.append(os.path.join(_HERE, "config.yaml"))
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return candidates[0]
+
+
+DEFAULT_CONFIG_PATH = _find_default_config()
 
 
 def load_config(path: str) -> dict:
