@@ -181,17 +181,23 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     if _FROZEN:
-        # 关键修复：mediapipe 用 os.path.abspath(__file__)[:-3] 推它的资源根，
-        # 打包后这个路径依赖当前工作目录——从 exe 文件夹启动会去
-        # "<exe目录>/mediapipe/modules" 找模型，而文件其实在 _internal 下，
-        # 差一层导致 FileNotFoundError。把工作目录切到 _internal（_MEIPASS），
-        # mediapipe 就能按 "mediapipe/modules/..." 正确找到。
-        # 注意：本程序读配置/写 CSV 都用绝对路径，切换工作目录不受影响。
         meipass = getattr(sys, "_MEIPASS", "")
         if meipass:
             os.chdir(meipass)
-        print("[调试] mediapipe/modules 是否存在：",
-              os.path.isdir(os.path.join(meipass, "mediapipe", "modules")))
+        # 精确诊断：复刻 mediapipe 的资源根路径计算，看它到底去哪找、文件在不在。
+        try:
+            import mediapipe.python.solution_base as _sb
+            _sbf = os.path.abspath(_sb.__file__)
+            _root = os.sep.join(_sbf.split(os.sep)[:-3])
+            _rel = os.path.join("mediapipe", "modules", "face_landmark",
+                                "face_landmark_front_cpu.binarypb")
+            print("[调试] solution_base:", _sbf)
+            print("[调试] mediapipe 算出的根路径:", _root)
+            print("[调试] 它要找:", os.path.join(_root, _rel))
+            print("[调试] 那里有文件吗:", os.path.isfile(os.path.join(_root, _rel)))
+            print("[调试] _MEIPASS 下有吗:", os.path.isfile(os.path.join(meipass, _rel)))
+        except Exception as _e:
+            print("[调试] 诊断异常:", _e)
 
     if not os.path.isfile(args.config):
         print("[错误] 找不到配置文件：{}".format(args.config), file=sys.stderr)
