@@ -17,6 +17,16 @@ import argparse
 import os
 import sys
 
+# Windows 控制台默认编码可能不是 UTF-8（如 GBK/cp1252），直接 print 中文会
+# 抛 UnicodeEncodeError 让程序崩溃。这里强制把标准输出/错误切到 UTF-8
+# （errors=replace 兜底），保证在任何环境打印中文都不会挂。
+for _stream_name in ("stdout", "stderr"):
+    _stream = getattr(sys, _stream_name, None)
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # 降低 OpenCV V4L 探测警告噪声：必须在任何 cv2 导入之前设置
 os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
 
