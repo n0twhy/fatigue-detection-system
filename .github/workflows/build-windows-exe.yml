@@ -41,6 +41,14 @@ jobs:
       - name: 打包
         run: pyinstaller --noconfirm fatigue_system/packaging/app.spec
 
+      - name: 冒烟测试（CI 里离屏跑一下 exe，把诊断/报错打进日志）
+        continue-on-error: true
+        shell: cmd
+        run: |
+          cd dist\疲劳检测系统
+          set QT_QPA_PLATFORM=offscreen
+          疲劳检测系统.exe --selftest 2
+
       - name: 压缩成品
         run: Compress-Archive -Path dist\* -DestinationPath FatigueDetection-Windows.zip
 
