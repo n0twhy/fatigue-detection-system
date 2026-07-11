@@ -133,6 +133,11 @@ def _use_pyqt5_qt_plugins() -> None:
     覆盖该变量，指向 PyQt5/Qt5/plugins，从而使用兼容的插件。
     必须在 `import cv2` 之后、`QApplication(...)` 之前调用。
     """
+    if _FROZEN:
+        # 打包成 exe 时，PyInstaller 的运行时钩子已把 Qt 插件路径设到 _internal
+        # 里的正确位置。这里再按源码目录结构去覆盖只会指向不存在的路径，
+        # 反而让 Qt 平台插件加载失败、程序双击无反应。故打包环境直接跳过。
+        return
     import PyQt5
 
     base = os.path.dirname(PyQt5.__file__)

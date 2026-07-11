@@ -13,6 +13,8 @@ name: 打包 Windows EXE
 on:
   workflow_dispatch: {}          # 允许在网页上手动点按钮触发
   push:
+    branches:
+      - main                     # 推送到 main 就自动打包（调试期方便；稳定后可删掉这两行）
     tags:
       - 'v*'                      # 推送 v1.0 之类的标签时自动触发
 
