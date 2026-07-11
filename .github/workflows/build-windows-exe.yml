@@ -41,13 +41,18 @@ jobs:
       - name: 打包
         run: pyinstaller --noconfirm fatigue_system/packaging/app.spec
 
-      - name: 冒烟测试（CI 里离屏跑一下 exe，把诊断/报错打进日志）
+      - name: 冒烟测试（复制到中文路径运行，复现用户的中文用户名场景）
         continue-on-error: true
         shell: cmd
         run: |
-          cd dist\疲劳检测系统
+          chcp 65001
+          mkdir "测试_中文路径"
+          xcopy /E /I /Y "dist\FatigueDetection" "测试_中文路径\FatigueDetection" >nul
+          cd "测试_中文路径\FatigueDetection"
           set QT_QPA_PLATFORM=offscreen
-          疲劳检测系统.exe --selftest 2
+          set PYTHONUTF8=1
+          FatigueDetection.exe --selftest 2
+          echo 冒烟测试退出码: %ERRORLEVEL%
 
       - name: 压缩成品
         run: Compress-Archive -Path dist\* -DestinationPath FatigueDetection-Windows.zip

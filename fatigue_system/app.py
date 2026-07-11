@@ -174,6 +174,37 @@ def _use_pyqt5_qt_plugins() -> None:
             return
 
 
+def _fix_mediapipe_unicode_path() -> None:
+    """让 mediapipe 在含中文/非 ASCII 路径下也能找到模型文件（仅打包后 Windows）。
+
+    mediapipe 的 C++ 层无法打开含非 ASCII 字符的路径。它用
+    solution_base.__file__ 推算资源根，若 exe 放在中文用户名/文件夹下
+    （如 C:\\Users\\风涌云起\\...），推出来的路径带中文，底层就打不开模型、
+    报 FileNotFoundError。
+
+    解法：把资源根目录（_MEIPASS）转成 Windows 短路径(8.3 命名，全 ASCII)，
+    并据此改写 solution_base.__file__，使 mediapipe 后续按 ASCII 短路径去找。
+    短路径生成默认在系统盘开启；万一取不到就保持原样、静默跳过。
+    """
+    if sys.platform != "win32":
+        return
+    meipass = getattr(sys, "_MEIPASS", "")
+    if not meipass:
+        return
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(32768)
+        if not ctypes.windll.kernel32.GetShortPathNameW(meipass, buf, 32768):
+            return
+        short = buf.value
+        os.chdir(short)
+        import mediapipe.python.solution_base as _sb
+        # solution_base 用 abspath(__file__)[:-3] 当资源根；给它一个短路径版本
+        _sb.__file__ = os.path.join(short, "mediapipe", "python", "solution_base.py")
+    except Exception as exc:
+        print("[提示] mediapipe 中文路径兼容处理未生效：{}".format(exc), file=sys.stderr)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="疲劳检测与预警系统（M0：视频源预览）")
     parser.add_argument(
@@ -191,23 +222,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     if _FROZEN:
-        meipass = getattr(sys, "_MEIPASS", "")
-        if meipass:
-            os.chdir(meipass)
-        # 精确诊断：复刻 mediapipe 的资源根路径计算，看它到底去哪找、文件在不在。
-        try:
-            import mediapipe.python.solution_base as _sb
-            _sbf = os.path.abspath(_sb.__file__)
-            _root = os.sep.join(_sbf.split(os.sep)[:-3])
-            _rel = os.path.join("mediapipe", "modules", "face_landmark",
-                                "face_landmark_front_cpu.binarypb")
-            print("[调试] solution_base:", _sbf)
-            print("[调试] mediapipe 算出的根路径:", _root)
-            print("[调试] 它要找:", os.path.join(_root, _rel))
-            print("[调试] 那里有文件吗:", os.path.isfile(os.path.join(_root, _rel)))
-            print("[调试] _MEIPASS 下有吗:", os.path.isfile(os.path.join(meipass, _rel)))
-        except Exception as _e:
-            print("[调试] 诊断异常:", _e)
+        _fix_mediapipe_unicode_path()
 
     if not os.path.isfile(args.config):
         print("[错误] 找不到配置文件：{}".format(args.config), file=sys.stderr)

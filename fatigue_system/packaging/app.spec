@@ -53,15 +53,17 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# 产物名用英文：mediapipe 的 C++ 层打不开含中文的路径，exe/文件夹名带中文会
+# 让它找不到模型而崩溃。故 exe 用 ASCII 名（界面标题仍是中文，不影响观感）。
 exe = EXE(
     pyz, a.scripts, [],
     exclude_binaries=True,
-    name="疲劳检测系统",
+    name="FatigueDetection",
     console=True,                       # 调试期临时开：双击会弹黑窗口，崩溃时能看到报错。
                                         # 确认能正常运行后改回 False 出最终版。
     icon=None,                          # 有图标可在此填 .ico 路径
 )
 coll = COLLECT(
     exe, a.binaries, a.datas,
-    name="疲劳检测系统",               # 产物文件夹名 dist/疲劳检测系统/
+    name="FatigueDetection",           # 产物文件夹名 dist/FatigueDetection/
 )
