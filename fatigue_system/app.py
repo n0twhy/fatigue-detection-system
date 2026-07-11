@@ -174,35 +174,67 @@ def _use_pyqt5_qt_plugins() -> None:
             return
 
 
+def _is_ascii(text: str) -> bool:
+    try:
+        text.encode("ascii")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
 def _fix_mediapipe_unicode_path() -> None:
     """让 mediapipe 在含中文/非 ASCII 路径下也能找到模型文件（仅打包后 Windows）。
 
     mediapipe 的 C++ 层无法打开含非 ASCII 字符的路径。它用
-    solution_base.__file__ 推算资源根，若 exe 放在中文用户名/文件夹下
-    （如 C:\\Users\\风涌云起\\...），推出来的路径带中文，底层就打不开模型、
+    solution_base.__file__ 推算资源根，若 exe 在中文用户名/文件夹下
+    （如 C:\\Users\\风涌云起\\...），推出的路径带中文、底层打不开模型，
     报 FileNotFoundError。
 
-    解法：把资源根目录（_MEIPASS）转成 Windows 短路径(8.3 命名，全 ASCII)，
-    并据此改写 solution_base.__file__，使 mediapipe 后续按 ASCII 短路径去找。
-    短路径生成默认在系统盘开启；万一取不到就保持原样、静默跳过。
+    资源根路径本身就是 ASCII 时无需处理。否则两步兜底：
+      1) 转成 Windows 短路径(8.3，全 ASCII)——多数系统盘可用；
+      2) 短路径不可用时，把模型目录复制到一个纯 ASCII 目录（Public 下），
+         并据此改写 solution_base.__file__，让 mediapipe 按 ASCII 路径找。
     """
     if sys.platform != "win32":
         return
     meipass = getattr(sys, "_MEIPASS", "")
     if not meipass:
         return
+    print("[诊断] _MEIPASS =", meipass, "| 纯ASCII =", _is_ascii(meipass))
+    if _is_ascii(meipass):
+        return
+
+    import mediapipe.python.solution_base as _sb
+
+    # 方案1：Windows 短路径（8.3 命名，全 ASCII）
     try:
         import ctypes
         buf = ctypes.create_unicode_buffer(32768)
-        if not ctypes.windll.kernel32.GetShortPathNameW(meipass, buf, 32768):
-            return
-        short = buf.value
-        os.chdir(short)
-        import mediapipe.python.solution_base as _sb
-        # solution_base 用 abspath(__file__)[:-3] 当资源根；给它一个短路径版本
-        _sb.__file__ = os.path.join(short, "mediapipe", "python", "solution_base.py")
+        if ctypes.windll.kernel32.GetShortPathNameW(meipass, buf, 32768):
+            short = buf.value
+            if _is_ascii(short):
+                os.chdir(short)
+                _sb.__file__ = os.path.join(short, "mediapipe", "python", "solution_base.py")
+                print("[诊断] 用短路径修复：", short)
+                return
+            print("[诊断] 短路径仍含非ASCII：", short)
     except Exception as exc:
-        print("[提示] mediapipe 中文路径兼容处理未生效：{}".format(exc), file=sys.stderr)
+        print("[诊断] 短路径方案异常：", exc)
+
+    # 方案2：把 mediapipe/modules 复制到纯 ASCII 目录
+    try:
+        import shutil
+        base = os.environ.get("PUBLIC") or os.environ.get("ProgramData") or "C:\\"
+        if not _is_ascii(base):
+            base = "C:\\"
+        dst = os.path.join(base, "FatigueDetection_mp")
+        dst_mods = os.path.join(dst, "mediapipe", "modules")
+        if not os.path.isdir(dst_mods):
+            shutil.copytree(os.path.join(meipass, "mediapipe", "modules"), dst_mods)
+        _sb.__file__ = os.path.join(dst, "mediapipe", "python", "solution_base.py")
+        print("[诊断] 复制模型到 ASCII 目录修复：", dst)
+    except Exception as exc:
+        print("[诊断] ASCII 复制方案失败：", exc)
 
 
 def main(argv=None) -> int:
