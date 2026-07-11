@@ -20,6 +20,16 @@ FS_DIR = os.path.join(REPO_ROOT, "fatigue_system")
 # collect_all 会把它的数据、动态库和隐藏导入一并抓齐。
 mp_datas, mp_binaries, mp_hidden = collect_all("mediapipe")
 
+# 保险：显式再把 mediapipe 的 modules 目录（模型/图定义）放到 mediapipe/modules。
+# mediapipe 启动时会 chdir 到包根、再按 "mediapipe/modules/..." 相对路径找这些
+# 文件，位置差一层就会 FileNotFoundError。显式补一遍确保万无一失。
+try:
+    import mediapipe as _mp
+    _mp_root = os.path.dirname(_mp.__file__)
+    mp_datas += [(os.path.join(_mp_root, "modules"), "mediapipe/modules")]
+except Exception:
+    pass
+
 a = Analysis(
     [os.path.join(FS_DIR, "app.py")],
     pathex=[REPO_ROOT],                 # 让 fatigue_system 能作为包被导入

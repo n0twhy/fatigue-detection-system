@@ -180,6 +180,12 @@ def main(argv=None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if _FROZEN:
+        # 打包环境诊断：确认 mediapipe 模型目录是否被正确打进 exe（排查它
+        # 的 FileNotFoundError 用；确认无误后可删）。
+        _mp_modules = os.path.join(getattr(sys, "_MEIPASS", ""), "mediapipe", "modules")
+        print("[调试] mediapipe/modules 是否存在：", os.path.isdir(_mp_modules))
+
     if not os.path.isfile(args.config):
         print("[错误] 找不到配置文件：{}".format(args.config), file=sys.stderr)
         return 2
