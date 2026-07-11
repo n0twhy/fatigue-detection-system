@@ -21,7 +21,7 @@
 
 ### 方式一：直接用打包好的程序（推荐给测试同学，无需装环境）
 
-下载 Release 里的 `FatigueDetection-Windows.zip` → 解压 → 双击 `疲劳检测系统.exe`。
+下载 Release 里的 `FatigueDetection-Windows.zip` → 解压 → 双击 `FatigueDetection.exe`。
 （Windows，目标电脑不用装 Python，也不用打包。）
 
 > exe 由开发者打包一次后提供。打包方式见
