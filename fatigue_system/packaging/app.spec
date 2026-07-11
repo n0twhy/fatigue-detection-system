@@ -32,8 +32,10 @@ a = Analysis(
         "scipy.signal",
     ],
     excludes=[
-        # 这些只有 M5 离线实验依赖，软件本体用不到，排除以缩小体积
-        "torch", "torchvision", "matplotlib", "pandas",
+        # 这些只有 M5 离线实验依赖，软件本体用不到，排除以缩小体积。
+        # 注意：matplotlib 不能排除——mediapipe 的 drawing_utils 在 import 时
+        # 无条件加载它，排掉会导致 "No module named 'matplotlib'" 直接崩溃。
+        "torch", "torchvision",
         "unsupervised_methods", "neural_methods", "dataset", "evaluation",
         "tensorflow", "IPython", "notebook",
     ],
