@@ -47,7 +47,7 @@ from fatigue_system.core.feature_window import FeatureAggregator
 from fatigue_system.core.calibration import BaselineCalibrator
 from fatigue_system.core.rppg_realtime import RealtimeRPPG
 from fatigue_system.core import fusion
-from fatigue_system.core.types import FrameFeatures
+from fatigue_system.core.types import FrameFeatures, Baseline
 from fatigue_system.ui.video_widget import VideoWidget, draw_landmarks, draw_hud
 from fatigue_system.ui.panels import (
     AlarmPanel, ControlPanel, LevelPanel,
@@ -85,6 +85,11 @@ class MainWindow(QMainWindow):
         self._face_lost_since: Optional[float] = None
         self._face_lost_sec = float(
             self._config.get("alarm", {}).get("face_lost_sec", 3.0))
+        # 自动静息心率：未做（含HR的）校准时，用运行中的心率中位数作静息参照，
+        # 让生理子分无需完整校准也能激活（否则一直显示 "-"）。
+        self._hr_rest_samples: deque = deque(maxlen=180)
+        rp_cfg = self._config.get("rppg", {})
+        self._hr_rest_min_samples = int(rp_cfg.get("auto_rest_min_samples", 15))
 
         # M2：滑窗聚合 + 基线校准状态
         self._aggregator: Optional[FeatureAggregator] = None
@@ -222,6 +227,7 @@ class MainWindow(QMainWindow):
         self._last_result = None
         self._last_fusion_ts = None
         self._face_lost_since = None
+        self._hr_rest_samples.clear()
         self._aggregator = None
         self._calibrating = False
         self._rppg = None
@@ -289,6 +295,7 @@ class MainWindow(QMainWindow):
         self._last_result = None
         self._last_fusion_ts = None
         self._face_lost_since = None
+        self._hr_rest_samples.clear()
         # M4：换源即新建 rPPG 估计器（时间戳基准变了，旧缓冲必须作废）
         if bool(self._config.get("rppg", {}).get("enable", True)):
             self._rppg = RealtimeRPPG(self._source.fps, self._config)
@@ -346,8 +353,10 @@ class MainWindow(QMainWindow):
             if (self._last_fusion_ts is None
                     or ts - self._last_fusion_ts >= self._fusion_interval):
                 self._last_fusion_ts = ts
+                if self._last_hr is not None:
+                    self._hr_rest_samples.append(self._last_hr)
                 self._last_result = fusion.evaluate(
-                    wf, self._baseline, self._config, self._fsm)
+                    wf, self._physio_baseline(), self._config, self._fsm)
                 self._level_panel.set_result(self._last_result)
                 # 人脸丢失优先提示（并报警），否则走正常融合报警
                 if face_lost:
@@ -411,6 +420,22 @@ class MainWindow(QMainWindow):
             return 0.0
         span = self._tick_times[-1] - self._tick_times[0]
         return (len(self._tick_times) - 1) / span if span > 0 else 0.0
+
+    def _physio_baseline(self):
+        """供融合用的静息心率参照：优先校准值，否则用运行心率中位数自动兜底。
+
+        生理子分需要"本人静息心率"作参照。以前只能靠校准得到——没校准(含HR)
+        就一直没有、physio 显示 "-"。这里在缺失时用监测过程中累积的心率中位数
+        自动估一个静息参照，让 physio 无需完整校准也能激活。
+        """
+        b = self._baseline
+        if b is not None and getattr(b, "valid", False) and getattr(b, "hr_rest", None):
+            return b        # 已有校准静息心率，最准，直接用
+        if len(self._hr_rest_samples) >= self._hr_rest_min_samples:
+            s = sorted(self._hr_rest_samples)
+            median = s[len(s) // 2]
+            return Baseline(valid=True, hr_rest=float(median))
+        return b            # 心率样本还不够，physio 暂为 None（显示 "-"）
 
     def _update_status(self, ts: float) -> None:
         w, h = self._source.frame_size
