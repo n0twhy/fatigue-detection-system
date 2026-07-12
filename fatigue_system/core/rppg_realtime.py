@@ -54,6 +54,10 @@ class RealtimeRPPG:
         self._pos_win_sec = float(rp.get("pos_win_sec", 1.6))
         self._min_ratio = float(rp.get("min_buffer_ratio", 0.8))
         self._max_gap = float(rp.get("max_gap_sec", 1.0))
+        # 心率时间域平滑：对最近 N 次逐秒估计做中值滤波，压制"谐波/噪声峰
+        # 抢占"导致的单次跳变（如 100→60→100）。中值对孤立异常值最鲁棒。
+        self._hr_smooth_n = max(1, int(rp.get("hr_smooth_window", 5)))
+        self._hr_history = deque(maxlen=self._hr_smooth_n)
         # 缓冲：(ts, r, g, b)
         self._buf = deque()
         # 估计缓存（按 update_interval_sec 节拍重算，其余时刻返回缓存）
@@ -83,6 +87,7 @@ class RealtimeRPPG:
     def reset(self) -> None:
         """清空缓冲与缓存（切换视频源时调用）。"""
         self._buf.clear()
+        self._hr_history.clear()
         self._last_est_ts = None
         self._cached = (None, None)
 
@@ -136,9 +141,18 @@ class RealtimeRPPG:
         if not np.any(np.isfinite(bvp)) or np.std(bvp) < 1e-12:
             return None, None
 
-        hr = self._hr_from_fft(bvp, fs)
-        hrv = self._hrv_from_peaks(bvp, fs, hr)
+        raw_hr = self._hr_from_fft(bvp, fs)
+        # HRV 用本窗口的原始 HR 做门控（更贴合当前 BVP），HR 显示值再做平滑
+        hrv = self._hrv_from_peaks(bvp, fs, raw_hr)
+        hr = self._smooth_hr(raw_hr)
         return hr, hrv
+
+    def _smooth_hr(self, raw_hr: Optional[float]) -> Optional[float]:
+        """对逐秒 HR 做滑动中值滤波，抑制单次跳变。"""
+        if raw_hr is None:
+            return float(np.median(self._hr_history)) if self._hr_history else None
+        self._hr_history.append(raw_hr)
+        return float(np.median(self._hr_history))
 
     def _pos(self, rgb: np.ndarray, fs: float) -> np.ndarray:
         """POS 核心：滑窗归一化 + 投影 + overlap-add，输出脉搏波。"""

@@ -50,8 +50,9 @@ from fatigue_system.core import fusion
 from fatigue_system.core.types import FrameFeatures
 from fatigue_system.ui.video_widget import VideoWidget, draw_landmarks, draw_hud
 from fatigue_system.ui.panels import (
-    AlarmPanel, ControlPanel, FeaturePanel, LevelPanel, LogTablePanel,
+    AlarmPanel, ControlPanel, LevelPanel,
 )
+from fatigue_system.ui.plot_widget import MonitorPanel
 
 # 兼容旧引用（dev_tools/verify_gui_stages.py 从本模块导入绘制函数）
 _draw_landmarks = draw_landmarks
@@ -106,7 +107,7 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         self.setWindowTitle("疲劳检测系统 · Fatigue Monitor")
-        self.resize(1320, 860)
+        self.resize(1500, 1000)
 
         central = QWidget(self)
         root = QVBoxLayout(central)
@@ -126,23 +127,17 @@ class MainWindow(QMainWindow):
         right.addWidget(self._level_panel)
         self._alarm_panel = AlarmPanel(self._config, self)
         right.addWidget(self._alarm_panel)
-        self._log_panel = LogTablePanel(self)
-        right.addWidget(self._log_panel, stretch=1)
+        right.addStretch(1)
         right_box = QWidget(self)
         right_box.setLayout(right)
         right_box.setMinimumWidth(400)
         right_box.setMaximumWidth(480)
         upper.addWidget(right_box, stretch=1)
-        root.addLayout(upper, stretch=1)
+        root.addLayout(upper, stretch=3)
 
-        # 特征磁贴区（放进卡片容器）
-        feat_card = QFrame(self)
-        feat_card.setObjectName("card")
-        feat_lay = QVBoxLayout(feat_card)
-        feat_lay.setContentsMargins(14, 12, 14, 12)
-        self._features = FeaturePanel(self)
-        feat_lay.addWidget(self._features)
-        root.addWidget(feat_card)
+        # 指标监测区（曲线 + 全指标数值表），检测记录/曲线都在这里
+        self._monitor = MonitorPanel(self)
+        root.addWidget(self._monitor, stretch=2)
 
         # 操作控制区
         self._control = ControlPanel(self._vcfg, self)
@@ -231,8 +226,7 @@ class MainWindow(QMainWindow):
         self._pill.set_status("已停止", theme.TEXT_MUTE)
         self._video.show_message("已停止\n\n请选择摄像头或打开视频文件")
         self._status_label.setText("已停止")
-        self._features.set_frame_idle("逐帧：已停止")
-        self._features.set_window_idle()
+        self._monitor.reset()
         self._level_panel.set_idle()
         self._alarm_panel.set_idle()
 
@@ -247,7 +241,7 @@ class MainWindow(QMainWindow):
         self._calibrating = True
         self._control.set_calibrate_enabled(False)
         dur = self._config.get("calibration", {}).get("duration_sec", 30)
-        self._features.set_baseline_text(
+        self._monitor.set_baseline_text(
             "⏳ 基线校准中 0%（约 {}s）—— 请保持清醒、睁眼、闭口、头部中正、正对镜头".format(dur))
 
     def _on_record_toggled(self, recording: bool) -> None:
@@ -256,9 +250,7 @@ class MainWindow(QMainWindow):
                 self._warn("请先打开摄像头或视频文件，再开始记录。")
                 self._control.set_recording(False)
                 return
-            path = self._logger.start()
-            self._log_panel.clear_rows()
-            self._log_panel.set_hint("记录中 → {}".format(path))
+            self._logger.start()
         else:
             self._stop_recording_if_active()
 
@@ -268,7 +260,7 @@ class MainWindow(QMainWindow):
         csv_path = self._logger.csv_path
         summary = self._logger.stop(avg_fps=self._measured_fps())
         self._control.set_recording(False)
-        self._log_panel.set_hint("已保存：{}（汇总：{}）".format(csv_path, summary))
+        self._warn("检测记录已保存：\n{}\n\n会话汇总：\n{}".format(csv_path, summary))
 
     # ------------------------------- 帧循环 ----------------------------------
 
@@ -328,13 +320,12 @@ class MainWindow(QMainWindow):
                 if self._calibrator.is_done():
                     self._finish_calibration()
                 else:
-                    self._features.set_baseline_text(
+                    self._monitor.set_baseline_text(
                         "⏳ 基线校准中 {:.0f}% —— 请保持清醒、睁眼、闭口、头部中正、正对镜头".format(
                             self._calibrator.progress() * 100))
             wf = self._aggregator.result()
             wf.hr = self._last_hr       # M4：HR/HRV 汇入窗口特征（缺失即 None）
             wf.hrv = self._last_hrv
-            self._features.update_window(wf)
 
             # M3：融合评分 + 报警（按 update_interval_sec 节拍，按 ts 判定）
             if (self._last_fusion_ts is None
@@ -348,14 +339,14 @@ class MainWindow(QMainWindow):
 
         # M3：CSV 记录（每帧喂入统计，写行节拍由 logger 内部控制）
         if wf is not None and self._last_result is not None and self._logger.active:
-            if self._logger.log(ff, wf, self._last_result):
-                self._log_panel.append_row(ff, wf, self._last_result)
+            self._logger.log(ff, wf, self._last_result)
 
         self._video.show_frame(annotated)
         self._update_status(ts)
         head_state = classify_head_state(
             ff.pitch, ff.yaw, ff.roll, self._baseline, self._config) if ff.face_found else ""
-        self._features.update_frame(ff, head_state)
+        # 指标监测：每帧刷新曲线与全指标数值表
+        self._monitor.append(ff, wf, self._last_result, head_state)
 
     def _finish_calibration(self) -> None:
         self._baseline = self._calibrator.finalize()
@@ -365,13 +356,13 @@ class MainWindow(QMainWindow):
         if b.valid:
             self._aggregator.set_baseline(b)
             hr_text = " | 静息HR {:.0f}".format(b.hr_rest) if b.hr_rest else ""
-            self._features.set_baseline_text(
+            self._monitor.set_baseline_text(
                 "✅ 基线：睁眼EAR {:.3f}±{:.3f} | 闭口MAR {:.3f} | 头中性(俯{:+.1f} 偏{:+.1f} 翻{:+.1f}) | "
                 "个性化闭眼阈={:.3f}{hr}".format(
                     b.ear_open_mean, b.ear_open_std, b.mar_closed_mean,
                     b.pitch, b.yaw, b.roll, self._aggregator.ear_closed_thresh, hr=hr_text))
         else:
-            self._features.set_baseline_text(
+            self._monitor.set_baseline_text(
                 "⚠ 基线样本不足（需正对镜头持续采集），仍用默认阈值，可重试。")
 
     # --------------------------- 逐帧检测 + 叠加 -----------------------------

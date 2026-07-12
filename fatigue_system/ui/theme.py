@@ -237,6 +237,26 @@ QLabel#baseline {{
     padding: 7px 10px;
 }}
 QLabel#heroLevel {{ font-size: 30px; font-weight: bold; }}
+
+/* ---- 指标选择器 chip（曲线图上方的分段选择）---- */
+QPushButton[chip="true"] {{
+    background-color: {SURFACE_2};
+    border: 1px solid {BORDER};
+    border-radius: 13px;
+    padding: 4px 13px;
+    font-size: 12px;
+    color: {TEXT_DIM};
+}}
+QPushButton[chip="true"]:hover {{
+    border-color: {ACCENT};
+    color: {TEXT};
+}}
+QPushButton[chip="true"]:checked {{
+    background-color: {ACCENT};
+    border-color: {ACCENT};
+    color: {BG};
+    font-weight: bold;
+}}
 """
 
 
