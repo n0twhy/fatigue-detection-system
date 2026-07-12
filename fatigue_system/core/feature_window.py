@@ -52,6 +52,9 @@ class FeatureAggregator:
         self._blink_min_dur = float(eye.get("blink_min_duration_sec", 0.06))
         self._perclos_win = float(eye.get("perclos_window_sec", 30))
         self._blink_win = float(eye.get("blink_window_sec", 60))
+        # 眨眼率最小归一化窗口：启动时窗口未填满，若直接除以极小的已过时长会让
+        # 眨眼率虚高爆表（反馈#3）。用此最小分母兜底，早期宁可略低不高估。
+        self._blink_rate_min_win = float(eye.get("blink_rate_min_window_sec", 15))
         # 个性化闭眼阈：校准后按"睁眼均值 − k×睁眼标准差"设定（见 set_baseline）。
         # 参考 PeerJ 2022《Adjusting EAR...》与 Soukupová&Čech 2016 的思路：固定阈值
         # 因人而异不可靠，应贴合本人的睁眼水平与信号噪声。EAR 先做滑动平滑去抖。
@@ -65,7 +68,9 @@ class FeatureAggregator:
         self._yawn_win = float(mouth.get("yawn_window_sec", 60))
         # 头部
         self._nod_win = float(head.get("nod_window_sec", 10))
-        self._nod_amp = float(head.get("nod_amplitude_deg", 5))
+        self._nod_amp = float(head.get("nod_amplitude_deg", 8))
+        # 判为"点头"状态所需的最少点头次数：单次偏离(如哈欠头微动)不算点头（反馈#2）
+        self._nod_min_count = int(head.get("nod_min_count", 2))
 
         self._max_win = max(self._perclos_win, self._blink_win, self._yawn_win, self._nod_win)
         # 缓冲：每项 = (ts, face_found, ear, mar, pitch, yaw, roll)
@@ -142,6 +147,7 @@ class FeatureAggregator:
         wf.perclos = self._compute_perclos()
         wf.blink_count, wf.blink_rate = self._compute_blinks()
         wf.eye_closed_dur = self._compute_longest_closed()
+        wf.current_closed_dur = self._compute_current_closed()
         yc, yflag, mar_mean = self._compute_yawn()
         wf.yawn_count = yc
         wf.yawn_flag = yflag
@@ -188,10 +194,12 @@ class FeatureAggregator:
         # 收尾：窗口末仍闭眼（无后续帧，保守用末帧时刻）
         if run_start is not None and w[-1][0] - run_start >= self._blink_min_dur:
             blinks += 1
+        # 归一化到"次/分"。用最小分母避免启动时窗口未填满、分母过小导致虚高。
         elapsed = w[-1][0] - w[0][0]
-        if elapsed <= 0:
+        denom = max(elapsed, self._blink_rate_min_win)
+        if denom <= 0:
             return blinks, 0.0
-        return blinks, blinks / elapsed * 60.0
+        return blinks, blinks / denom * 60.0
 
     def _compute_longest_closed(self) -> float:
         """最长连续闭眼时长(秒)，用时间戳、含帧间隔语义计算。
@@ -213,6 +221,26 @@ class FeatureAggregator:
         if run_start is not None:   # 收尾：窗口末仍闭眼，保守用末帧时刻
             longest = max(longest, w[-1][0] - run_start)
         return longest
+
+    def _compute_current_closed(self) -> float:
+        """当前正在进行的连续闭眼时长（秒）；最新帧未闭眼则为 0。
+
+        反映"此刻已经连续闭了多久"，无历史老化、不受统计窗口长度限制（仅受缓冲
+        长度限制），比窗口内"最长闭眼"即时得多——供微睡眠直接报警用（反馈#1/#5）。
+        """
+        if not self._buf:
+            return 0.0
+        last = self._buf[-1]
+        if not (last[1] and last[2] < self._cur_thresh):
+            return 0.0
+        now = last[0]
+        start = now
+        for frame in reversed(self._buf):     # 从末尾往前扩展连续闭眼段
+            if frame[1] and frame[2] < self._cur_thresh:
+                start = frame[0]
+            else:
+                break
+        return now - start
 
     def _compute_yawn(self):
         """哈欠：MAR>阈值且持续≥最短哈欠时长记一次；返回(计数, 当前是否哈欠, MAR均值)。
@@ -242,26 +270,32 @@ class FeatureAggregator:
         return count, flag, mar_mean
 
     def _count_nods(self, w) -> int:
-        """点头计数：俯仰角偏离窗口均值超过幅度阈值(带迟滞)记一次头部摆动。"""
+        """点头计数：只有"偏离→回归"的完整摆动才算一次点头（反馈#2）。
+
+        旧法只要俯仰角偏离均值超阈值就+1，导致打哈欠时头部一次缓慢前倾被连续
+        误判为多次点头。现用状态机：俯仰角先越过 ±nod_amp（进入偏离态），再回到
+        ±nod_amp×0.4 以内（回归）才计一次——一次持续前倾（如哈欠）至多计 1 次，
+        周期性点头才会累计多次。基准用中位数，抗持续前倾把均值带偏。
+        """
         face = [f for f in w if f[1]]
-        if len(face) < 3:
+        if len(face) < 5:
             return 0
-        pitches = [f[4] for f in face]
-        mean = float(np.mean(pitches))
+        pitches = np.asarray([f[4] for f in face], dtype=np.float64)
+        base = float(np.median(pitches))
         nods = 0
-        armed = True
+        deviated = False
         for p in pitches:
-            d = abs(p - mean)
-            if d > self._nod_amp and armed:
+            d = abs(p - base)
+            if not deviated and d > self._nod_amp:
+                deviated = True
+            elif deviated and d < self._nod_amp * 0.4:
                 nods += 1
-                armed = False
-            elif d < self._nod_amp * 0.5:
-                armed = True
+                deviated = False
         return nods
 
     def _compute_head_state(self, nod_count: int) -> str:
-        """头部状态：近 1s 平均角经 classify_head_state 判定；有点头则置 nodding。"""
-        if nod_count > 0:
+        """头部状态：达到最少点头次数才判 nodding；否则按近 1s 平均角分类。"""
+        if nod_count >= self._nod_min_count:
             return HEAD_STATE_NODDING
         recent = [f for f in self._window(1.0) if f[1]]
         if not recent:

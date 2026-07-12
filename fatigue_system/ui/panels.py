@@ -247,11 +247,37 @@ class AlarmPanel(QGroupBox):
         lay.addWidget(self._info)
 
         self._active = False
+        self._face_lost = False
         self._alarm_count = 0
         self._last_sound_t: Optional[float] = None
         self._popup: Optional[QMessageBox] = None
 
+    _LOST_STYLE = ("background-color:{}; color:#ffffff; border:1px solid {}; border-radius:8px; "
+                   "padding:10px; font-size:14px; font-weight:bold;").format("#3a2d10", theme.LEVEL_COLORS[2])
+
+    def set_face_lost(self, active: bool) -> None:
+        """人脸持续丢失（趴睡/离开画面）时的橙色提示 + 提示音（组员反馈#8）。
+
+        不硬判"重度疲劳"（离开画面也可能只是走开，硬判会误报），而是明确提示
+        "请回到画面中"并响铃，让检测对象回归；面部回归后自动恢复正常横幅。
+        """
+        if active and not self._face_lost:
+            self._banner.setText("⚠  未检测到人脸 · 请回到摄像头画面中")
+            self._banner.setStyleSheet(self._LOST_STYLE)
+            self._play_sound()
+        elif active:
+            if (self._last_sound_t is not None
+                    and monotonic() - self._last_sound_t >= self._repeat_sec):
+                self._play_sound()
+        elif self._face_lost:      # 面部回归 → 恢复正常
+            self._banner.setText("● 正常监测中")
+            self._banner.setStyleSheet(self._OK_STYLE)
+            self._active = False
+        self._face_lost = active
+
     def update_alarm(self, active: bool, level_name: str) -> None:
+        if self._face_lost:        # 人脸丢失提示优先，暂不覆盖
+            return
         if active and not self._active:
             self._alarm_count += 1
             self._banner.setText("⚠  重度疲劳报警 · 请立即休息")
@@ -272,6 +298,7 @@ class AlarmPanel(QGroupBox):
 
     def set_idle(self) -> None:
         self._active = False
+        self._face_lost = False
         self._banner.setText("● 正常监测中")
         self._banner.setStyleSheet(self._OK_STYLE)
         if self._popup is not None:

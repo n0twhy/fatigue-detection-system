@@ -81,6 +81,10 @@ class MainWindow(QMainWindow):
         self._last_features: Optional[FrameFeatures] = None
         self._last_result = None                 # 最近一次融合结果（按节拍更新）
         self._last_fusion_ts: Optional[float] = None
+        # 人脸持续丢失（趴睡/离开画面）检测
+        self._face_lost_since: Optional[float] = None
+        self._face_lost_sec = float(
+            self._config.get("alarm", {}).get("face_lost_sec", 3.0))
 
         # M2：滑窗聚合 + 基线校准状态
         self._aggregator: Optional[FeatureAggregator] = None
@@ -202,7 +206,8 @@ class MainWindow(QMainWindow):
             self._warn("打开摄像头 [{}] 失败。设备可能被占用或不可用。".format(index))
 
     def _on_open_file(self, path: str) -> None:
-        self._source.loop = True
+        # 默认播完自动停止（不循环），便于单遍回放测试（组员反馈）；config 可开循环
+        self._source.loop = bool(self._vcfg.get("loop_file", False))
         if self._source.open_file(path):
             self._start_loop()
         else:
@@ -216,6 +221,7 @@ class MainWindow(QMainWindow):
         self._last_features = None
         self._last_result = None
         self._last_fusion_ts = None
+        self._face_lost_since = None
         self._aggregator = None
         self._calibrating = False
         self._rppg = None
@@ -282,6 +288,7 @@ class MainWindow(QMainWindow):
         self._fsm.reset()
         self._last_result = None
         self._last_fusion_ts = None
+        self._face_lost_since = None
         # M4：换源即新建 rPPG 估计器（时间戳基准变了，旧缓冲必须作废）
         if bool(self._config.get("rppg", {}).get("enable", True)):
             self._rppg = RealtimeRPPG(self._source.fps, self._config)
@@ -327,6 +334,14 @@ class MainWindow(QMainWindow):
             wf.hr = self._last_hr       # M4：HR/HRV 汇入窗口特征（缺失即 None）
             wf.hrv = self._last_hrv
 
+            # 人脸持续丢失检测（组员反馈#8：趴睡面部离开画面采集不到）
+            if ff.face_found:
+                self._face_lost_since = None
+            elif self._face_lost_since is None:
+                self._face_lost_since = ts
+            face_lost = (self._face_lost_since is not None
+                         and ts - self._face_lost_since >= self._face_lost_sec)
+
             # M3：融合评分 + 报警（按 update_interval_sec 节拍，按 ts 判定）
             if (self._last_fusion_ts is None
                     or ts - self._last_fusion_ts >= self._fusion_interval):
@@ -334,8 +349,13 @@ class MainWindow(QMainWindow):
                 self._last_result = fusion.evaluate(
                     wf, self._baseline, self._config, self._fsm)
                 self._level_panel.set_result(self._last_result)
-                self._alarm_panel.update_alarm(
-                    self._last_result.alarm, self._last_result.level_name)
+                # 人脸丢失优先提示（并报警），否则走正常融合报警
+                if face_lost:
+                    self._alarm_panel.set_face_lost(True)
+                else:
+                    self._alarm_panel.set_face_lost(False)
+                    self._alarm_panel.update_alarm(
+                        self._last_result.alarm, self._last_result.level_name)
 
         # M3：CSV 记录（每帧喂入统计，写行节拍由 logger 内部控制）
         if wf is not None and self._last_result is not None and self._logger.active:

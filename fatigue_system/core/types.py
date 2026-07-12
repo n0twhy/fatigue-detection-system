@@ -69,6 +69,8 @@ class WindowFeatures:
         blink_rate    —— 眨眼率，单位 次/分。
         blink_count   —— 眨眼统计窗口内的眨眼次数（原始计数，便于人工核对）。
         eye_closed_dur—— 窗口内最长连续闭眼时长，单位秒。
+        current_closed_dur—— 截至当前帧、正在进行的连续闭眼时长，单位秒
+                     （用于微睡眠直接报警；区别于历史最长值）。
         yawn_count    —— 窗口内哈欠次数。
         yawn_flag     —— 当前是否处于哈欠状态。
         mar_mean      —— 窗口内 MAR 均值。
@@ -82,6 +84,7 @@ class WindowFeatures:
     blink_rate: float = 0.0
     blink_count: int = 0
     eye_closed_dur: float = 0.0
+    current_closed_dur: float = 0.0
     yawn_count: int = 0
     yawn_flag: bool = False
     mar_mean: float = 0.0

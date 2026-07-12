@@ -47,8 +47,11 @@ def eye_subscore(wf, baseline, cfg) -> float:
         cfg      —— 完整配置字典。
     """
     sub = _sub_cfg(cfg)
+    full_sec = float(sub.get("eye_closed_full_sec", 2.0))
     perclos_s = _clamp01(wf.perclos / float(sub.get("perclos_full", 0.40)))
-    closed_s = _clamp01(wf.eye_closed_dur / float(sub.get("eye_closed_full_sec", 2.0)))
+    # 闭眼时长子分：取"窗口内最长"与"当前正在进行"的较大者——后者更即时，
+    # 让持续闭眼一开始就把眼部子分推高（反馈#1：闭眼对分数影响要明显）。
+    closed_s = _clamp01(max(wf.eye_closed_dur, wf.current_closed_dur) / full_sec)
     br_normal = float(sub.get("blink_rate_normal", 20))
     br_full = float(sub.get("blink_rate_full", 40))
     blink_s = 0.0
@@ -210,8 +213,19 @@ def evaluate(wf, baseline, cfg, fsm: AlarmFSM) -> FatigueResult:
     raw_level, _ = to_level(raw_score, cfg)
     alarm = fsm.update(raw_level, raw_score)
     level = fsm.smoothed_level
+    score = fsm.smoothed_score
+
+    # 微睡眠硬规则：持续闭眼超过阈值 → 立即判重度并报警（反馈#1/#5）。
+    # 微睡眠是最危险状态，不等 EMA 平滑与"连续N窗"慢慢累积，直接越过 FSM。
+    micro = float((cfg or {}).get("fusion", {}).get("microsleep_sec", 2.0))
+    if micro > 0 and getattr(wf, "current_closed_dur", 0.0) >= micro:
+        level = LEVEL_SEVERE
+        alarm = True
+        severe_th = float((cfg or {}).get("fusion", {}).get("level_thresholds", {}).get("severe", 0.70))
+        score = max(score, severe_th)   # 分数也顶到重度线，界面显示一致
+
     return FatigueResult(
-        score=fsm.smoothed_score,
+        score=score,
         level=level,
         level_name=LEVEL_NAMES[level],
         sub_scores=sub,

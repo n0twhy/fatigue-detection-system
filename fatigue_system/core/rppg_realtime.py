@@ -55,9 +55,12 @@ class RealtimeRPPG:
         self._min_ratio = float(rp.get("min_buffer_ratio", 0.8))
         self._max_gap = float(rp.get("max_gap_sec", 1.0))
         # 心率时间域平滑：对最近 N 次逐秒估计做中值滤波，压制"谐波/噪声峰
-        # 抢占"导致的单次跳变（如 100→60→100）。中值对孤立异常值最鲁棒。
-        self._hr_smooth_n = max(1, int(rp.get("hr_smooth_window", 5)))
+        # 抢占"导致的单次跳变（如 98→57→71）。中值对孤立异常值最鲁棒。
+        self._hr_smooth_n = max(1, int(rp.get("hr_smooth_window", 9)))
         self._hr_history = deque(maxlen=self._hr_smooth_n)
+        # 离群门控：新估计偏离近期中位超过此值(bpm)则视为伪峰、直接丢弃（生理上
+        # 心率每秒不可能变这么多），进一步防跳变。设 0 关闭。
+        self._hr_max_step = float(rp.get("hr_max_step_bpm", 12))
         # 缓冲：(ts, r, g, b)
         self._buf = deque()
         # 估计缓存（按 update_interval_sec 节拍重算，其余时刻返回缓存）
@@ -148,9 +151,14 @@ class RealtimeRPPG:
         return hr, hrv
 
     def _smooth_hr(self, raw_hr: Optional[float]) -> Optional[float]:
-        """对逐秒 HR 做滑动中值滤波，抑制单次跳变。"""
+        """对逐秒 HR 做离群门控 + 滑动中值滤波，抑制单次跳变。"""
         if raw_hr is None:
             return float(np.median(self._hr_history)) if self._hr_history else None
+        # 离群门控：已有稳定历史时，偏离近期中位过大的新值视为伪峰、丢弃
+        if self._hr_max_step > 0 and len(self._hr_history) >= 3:
+            cur = float(np.median(self._hr_history))
+            if abs(raw_hr - cur) > self._hr_max_step:
+                return cur
         self._hr_history.append(raw_hr)
         return float(np.median(self._hr_history))
 
