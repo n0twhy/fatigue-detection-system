@@ -88,7 +88,8 @@ class TimeSeriesChart(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
-        left, top, right, bottom = 52, 30, 12, 22
+        # top 留足 34px 顶部标题带，避免标题/当前值被切
+        left, top, right, bottom = 52, 34, 14, 22
         pw, ph = w - left - right, h - top - bottom
         if pw <= 10 or ph <= 10:
             p.end()
@@ -100,15 +101,15 @@ class TimeSeriesChart(QWidget):
         p.drawRoundedRect(left, top, pw, ph, 6, 6)
 
         finite = [v for v in self._data if math.isfinite(v)]
-        # 顶部标题 + 当前值
+        # 顶部标题带（垂直居中在 [4, 30] 区间，不会顶到控件上沿）
         p.setPen(QColor(theme.TEXT_DIM))
         f = p.font(); f.setPointSize(9); f.setBold(True); p.setFont(f)
-        p.drawText(left, 8, pw, 16, Qt.AlignLeft, "{} · 曲线".format(self._label))
+        p.drawText(left, 4, pw, 24, Qt.AlignLeft | Qt.AlignVCenter, "{} · 曲线".format(self._label))
         if finite:
             cur = finite[-1]
             p.setPen(self._color)
             f2 = p.font(); f2.setPointSize(12); f2.setBold(True); p.setFont(f2)
-            p.drawText(left, 6, pw, 18, Qt.AlignRight, self._unit_fmt.format(cur))
+            p.drawText(left, 4, pw, 24, Qt.AlignRight | Qt.AlignVCenter, self._unit_fmt.format(cur))
 
         if len(finite) < 2:
             p.setPen(QColor(theme.TEXT_MUTE))

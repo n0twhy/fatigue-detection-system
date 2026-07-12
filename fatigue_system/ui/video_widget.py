@@ -28,8 +28,8 @@ _HUD_DIM = (150, 150, 140)
 
 def draw_landmarks(frame, landmarks_px) -> None:
     """叠加 468 关键点，高亮眼部(绿)/嘴部(红)。原地修改 frame。"""
-    for (x, y) in landmarks_px:
-        cv2.circle(frame, (int(x), int(y)), 1, (170, 170, 170), -1)
+    for pt in landmarks_px:      # 关键点现为 (N,3)，画点只用 x,y
+        cv2.circle(frame, (int(pt[0]), int(pt[1])), 1, (170, 170, 170), -1)
     for i in LEFT_EYE_IDX + RIGHT_EYE_IDX:
         cv2.circle(frame, (int(landmarks_px[i][0]), int(landmarks_px[i][1])), 2, (0, 255, 0), -1)
     mouth_idx = list(MOUTH_H_IDX) + [i for pair in MOUTH_V_PAIRS for i in pair]

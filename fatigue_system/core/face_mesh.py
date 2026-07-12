@@ -72,10 +72,14 @@ class FaceMeshDetector:
         if not result.multi_face_landmarks:
             return None, None
         lm = result.multi_face_landmarks[0].landmark
-        pts = np.empty((len(lm), 2), dtype=np.float32)
+        # 输出 (N, 3) 像素坐标：x/y 换成像素，z(深度，MediaPipe 按图宽归一)也乘图宽
+        # 换到同一像素尺度。带上 z 是为了让 EAR 用 3D 距离计算、消除头姿旋转造成的
+        # 透视变形（2D EAR 头一偏就跳的根源）。只需 2D 的消费方自行取前两列。
+        pts = np.empty((len(lm), 3), dtype=np.float32)
         for i, p in enumerate(lm):
             pts[i, 0] = p.x * w
             pts[i, 1] = p.y * h
+            pts[i, 2] = p.z * w
         roi_rgb = self._compute_roi_rgb(rgb, pts)
         return pts, roi_rgb
 

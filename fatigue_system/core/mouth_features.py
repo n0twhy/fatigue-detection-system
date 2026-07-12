@@ -31,6 +31,7 @@ def compute_mar(landmarks_px) -> float:
     """
     if landmarks_px is None or len(landmarks_px) < 468:
         return 0.0
+    landmarks_px = landmarks_px[:, :2]   # MAR 用 2D（保持既有尺度与哈欠阈值）
     horizontal = np.linalg.norm(landmarks_px[MOUTH_H_IDX[0]] - landmarks_px[MOUTH_H_IDX[1]])
     if horizontal < 1e-6:
         return 0.0

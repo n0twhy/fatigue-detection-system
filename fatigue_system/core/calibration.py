@@ -73,12 +73,22 @@ class BaselineCalibrator:
         return self.elapsed() >= self._duration and len(self._ears) >= self._MIN_SAMPLES
 
     def finalize(self) -> Baseline:
-        """结算基线；样本不足则返回 valid=False 的基线。"""
+        """结算基线；样本不足则返回 valid=False 的基线。
+
+        睁眼 EAR 用**中位数 + MAD(中位绝对偏差)**这类稳健统计，而非均值/标准差：
+        校准时人会不自主眨眼，这些少量低值会把普通均值拉低、把标准差撑大，导致
+        闭眼阈算得偏低而检不出闭眼。中位数/MAD 对这种少量离群值不敏感，得到更贴近
+        真实"睁眼水平"的均值与噪声。
+        """
         if len(self._ears) < self._MIN_SAMPLES:
             return Baseline(valid=False, n_samples=len(self._ears))
+        ears = np.asarray(self._ears)
+        med = float(np.median(ears))
+        mad = float(np.median(np.abs(ears - med)))
+        robust_std = 1.4826 * mad   # 正态下 MAD→标准差的一致估计
         return Baseline(
-            ear_open_mean=float(np.mean(self._ears)),
-            ear_open_std=float(np.std(self._ears)),
+            ear_open_mean=med,
+            ear_open_std=robust_std,
             mar_closed_mean=float(np.mean(self._mars)),
             pitch=float(np.mean(self._pitches)),
             yaw=float(np.mean(self._yaws)),

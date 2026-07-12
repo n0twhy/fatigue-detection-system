@@ -41,6 +41,10 @@ jobs:
       - name: 打包
         run: pyinstaller --noconfirm fatigue_system/packaging/app.spec
 
+      - name: 放一份可编辑的 config.yaml 到 exe 旁边（同学可改参数如 refine_landmarks）
+        shell: cmd
+        run: copy fatigue_system\config.yaml dist\FatigueDetection\config.yaml
+
       - name: 冒烟测试（在中文路径下离屏跑 exe，验证能正常启动；失败则构建失败）
         shell: cmd
         run: |

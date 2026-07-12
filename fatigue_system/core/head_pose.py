@@ -54,7 +54,8 @@ def estimate_head_pose(landmarks_px, image_shape) -> Tuple[float, float, float]:
     if landmarks_px is None or len(landmarks_px) < 468:
         return 0.0, 0.0, 0.0
     h, w = image_shape[0], image_shape[1]
-    image_pts = np.array([landmarks_px[i] for i in POSE_LANDMARK_IDX], dtype=np.float64)
+    # solvePnP 需要 2D 图像点；关键点现为 (N,3)，取前两列
+    image_pts = np.array([landmarks_px[i][:2] for i in POSE_LANDMARK_IDX], dtype=np.float64)
     focal = float(w)
     cam_matrix = np.array([
         [focal, 0, w / 2.0],
