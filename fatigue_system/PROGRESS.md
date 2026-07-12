@@ -9,11 +9,12 @@
 
 ## 0. 一句话现状
 
-四个创新点**代码落地 + 单测 11 条全绿 + 全回归 7 项无回退 + UI 截图确认 + 文档补记完毕**
-（2026-07-13）。剩下的是**同步到发布目录 FatigueDetectionSystem/ + 提交/打 v1.8 tag +
-确认 CI Release exe**。详见 §5 下一步 TODO。
-回归/单测脚本已持久化在 `dev_tools/verify_*.py`（含新建 `verify_innovations.py`），
-不再依赖临时 scratchpad。
+**v1.8 已发布、软件侧全部完成**（2026-07-13）：四个创新点落地（单测 11 条+全回归
+7 项全绿）、M6 交付物补齐（参数设置说明/测试指南/README/GUI 参数设置面板）、
+Release exe 真机中文路径验证通过。规格书 §9 交付物软件侧齐备。
+剩余工作只有**写报告**（§5 第 6 条：创新意识/未来工作章节素材见 §1/§3/§4）。
+回归/单测脚本持久化在 `dev_tools/verify_*.py`（innovations/settings/m3/m4/lowfps/
+weak_ear/feedback_fixes），不再依赖临时 scratchpad。
 
 ---
 
@@ -167,8 +168,12 @@
      `FeatureAggregator.reconfigure`，不清滑窗不丢报警状态）、
      「应用并保存」行级写回 config.yaml **保留全部中文注释**；
      单测 `dev_tools/verify_settings.py` 14 项全绿，受影响回归重跑全绿。
-5. [ ] **同步发布目录 + 提交 & 打 tag**：复制改动文件到 `FatigueDetectionSystem/`
-       → commit → push → 轮询 CI → 打 `v1.8` → 确认 Release 生成 exe。
+5. [x] **同步发布目录 + 提交 & 打 tag**（2026-07-13）：改动已同步并分两次提交
+       （dac857c 创新点 / 1caeb3a M6 补齐），CI 两次全绿，`v1.8` tag 已发
+       Release（FatigueDetection-Windows.zip 212.7MB）。**真机验证**：exe 在
+       `C:\Users\风涌云起\Downloads\疲劳检测v1.8测试\`（用户名+目录双中文路径）
+       经 WSL interop 实跑 `--selftest 6`，mediapipe 模型加载成功、exit 0——
+       中文路径修复未回退。
 6. [ ] 报告"创新意识"章节：按 §1/§4 组织；"未来工作"按 §3 组织（AU / KAN / 多传感器）。
 
 ---
@@ -185,5 +190,5 @@
 | UI 截图确认 | ✅ 通过（2026-07-13） |
 | 文档补记（实现记录/交接） | ✅ 已补（2026-07-13） |
 | M6 交付物补齐（参数说明/测试指南/README/参数面板） | ✅ 已补（2026-07-13） |
-| 同步 FatigueDetectionSystem/ | ⬜ 待做 |
-| 提交/打 tag/Release | ⬜ 待做 |
+| 同步 FatigueDetectionSystem/ | ✅ 已同步（2026-07-13） |
+| 提交/打 tag/Release | ✅ v1.8 已发布，exe 真机中文路径验证通过（2026-07-13） |
