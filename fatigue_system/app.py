@@ -72,10 +72,15 @@ DEFAULT_CONFIG_PATH = _find_default_config()
 
 
 def load_config(path: str) -> dict:
-    """读取 YAML 配置为字典，并把输出目录解析成可写的绝对路径。"""
+    """读取 YAML 配置为字典，并把输出目录解析成可写的绝对路径。
+
+    另在 "_config_path" 键记录来源文件的绝对路径（下划线开头、不与任何
+    配置段冲突），供「参数设置」面板把改动写回同一份文件。
+    """
     with open(path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
     _resolve_output_dir(config)
+    config["_config_path"] = os.path.abspath(path)
     return config
 
 

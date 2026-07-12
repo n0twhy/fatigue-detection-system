@@ -179,6 +179,14 @@ class AlarmFSM:
     """
 
     def __init__(self, cfg):
+        self.reconfigure(cfg)
+        self.reset()
+
+    def reconfigure(self, cfg) -> None:
+        """运行时重载防误报参数（「参数设置」面板调参后调用）。
+
+        只更新参数，不动 EMA/报警等运行状态——调参不应打断正在进行的监测。
+        """
         fusion_cfg = (cfg or {}).get("fusion", {})
         self._cfg = cfg
         self._alpha = float(fusion_cfg.get("smoothing_alpha", 0.3))
@@ -187,7 +195,6 @@ class AlarmFSM:
         # 创新③：置信度自适应决策窗口——多模态一致高疲劳时可少等几窗即报警
         self._adaptive_reduction = int(fusion_cfg.get("adaptive_alarm_reduction", 2))
         self._agree_conf = int(fusion_cfg.get("agreement_for_confident", 2))
-        self.reset()
 
     def reset(self) -> None:
         """复位（切换视频源/重新开始检测时调用）。"""

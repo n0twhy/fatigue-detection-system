@@ -40,11 +40,20 @@ class FeatureAggregator:
 
     def __init__(self, cfg, fps):
         cfg = cfg or {}
+        self._cfg = cfg
+        self._fps = float(fps) if fps and fps > 0 else 20.0
+        self._load_params(cfg)
+        self._ear_smooth = deque(maxlen=self._ear_smooth_n)
+        self._cur_thresh = self._ear_closed_thresh   # 当前生效阈值
+        # 缓冲：每项 = (ts, face_found, ear, mar, pitch, yaw, roll)
+        self._buf = deque()
+        self._baseline: Optional[Baseline] = None
+
+    def _load_params(self, cfg) -> None:
+        """从配置读入全部可调参数（__init__ 与 reconfigure 共用）。"""
         eye = cfg.get("eye", {})
         mouth = cfg.get("mouth", {})
         head = cfg.get("head", {})
-        self._cfg = cfg
-        self._fps = float(fps) if fps and fps > 0 else 20.0
 
         # 眼部
         self._ear_closed_thresh = float(eye.get("ear_closed_thresh", 0.21))  # 绝对回退阈值
@@ -62,8 +71,6 @@ class FeatureAggregator:
         # 因人而异不可靠，应贴合本人的睁眼水平与信号噪声。EAR 先做滑动平滑去抖。
         self._ear_smooth_n = max(1, int(eye.get("ear_smooth_frames", 3)))
         self._ear_k_std = float(eye.get("ear_closed_k_std", 2.0))
-        self._ear_smooth = deque(maxlen=self._ear_smooth_n)
-        self._cur_thresh = self._ear_closed_thresh   # 当前生效阈值
         # 嘴部
         self._mar_yawn = float(mouth.get("mar_yawn_thresh", 0.6))
         self._yawn_min_dur = float(mouth.get("yawn_min_duration_sec", 1.5))
@@ -75,9 +82,19 @@ class FeatureAggregator:
         self._nod_min_count = int(head.get("nod_min_count", 2))
 
         self._max_win = max(self._perclos_win, self._blink_win, self._yawn_win, self._nod_win)
-        # 缓冲：每项 = (ts, face_found, ear, mar, pitch, yaw, roll)
-        self._buf = deque()
-        self._baseline: Optional[Baseline] = None
+
+    def reconfigure(self, cfg) -> None:
+        """运行时重载可调参数（「参数设置」面板调参后调用）。
+
+        保留滑窗缓冲与已注入的基线——调参不清统计数据、不打断监测；
+        个性化闭眼阈按新的 k 值基于原基线重新推导。
+        """
+        self._cfg = cfg or {}
+        old_smooth_n = self._ear_smooth_n
+        self._load_params(self._cfg)
+        if self._ear_smooth_n != old_smooth_n:   # 平滑窗长变化时保留最近样本
+            self._ear_smooth = deque(self._ear_smooth, maxlen=self._ear_smooth_n)
+        self.set_baseline(self._baseline)
 
     # ------------------------------ 基线注入 ---------------------------------
 

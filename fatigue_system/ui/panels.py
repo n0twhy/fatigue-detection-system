@@ -305,6 +305,22 @@ class AlarmPanel(QGroupBox):
         if self._popup is not None:
             self._popup.hide()
 
+    def apply_config(self, cfg: Dict) -> None:
+        """运行时应用新的预警配置（「参数设置」面板调参后调用）。"""
+        alarm_cfg = (cfg or {}).get("alarm", {})
+        self._sound_enable = bool(alarm_cfg.get("sound_enable", True))
+        self._popup_enable = bool(alarm_cfg.get("popup_enable", True))
+        self._repeat_sec = float(alarm_cfg.get("repeat_sec", 5.0))
+        if self._sound_enable and self._sound is None:
+            wav = alarm_cfg.get("wav_path") or os.path.join(
+                (cfg or {}).get("logging", {}).get("csv_dir", "fatigue_system/outputs"),
+                "alarm.wav")
+            self._sound = _AlarmSound(wav)
+        elif not self._sound_enable:
+            self._sound = None
+        if not self._popup_enable and self._popup is not None:
+            self._popup.hide()
+
     @property
     def alarm_count(self) -> int:
         return self._alarm_count
@@ -337,6 +353,7 @@ class ControlPanel(QWidget):
     calibrate_requested = pyqtSignal()
     record_toggled = pyqtSignal(bool)
     landmarks_toggled = pyqtSignal(bool)
+    settings_requested = pyqtSignal()
     stop_requested = pyqtSignal()
 
     def __init__(self, vcfg: Dict, parent=None):
@@ -373,6 +390,10 @@ class ControlPanel(QWidget):
         self._chk_landmarks.stateChanged.connect(
             lambda s: self.landmarks_toggled.emit(bool(s)))
         lay.addWidget(self._chk_landmarks)
+        # M6 拓展：常用参数即时调整（任务书"鼓励增加参数设置"）
+        self._btn_settings = QPushButton("参数设置", self)
+        self._btn_settings.clicked.connect(self.settings_requested.emit)
+        lay.addWidget(self._btn_settings)
         lay.addStretch(1)
         self._btn_stop = QPushButton("停止", self)
         self._btn_stop.clicked.connect(self.stop_requested.emit)

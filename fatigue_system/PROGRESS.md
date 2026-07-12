@@ -156,10 +156,19 @@
        显示正常且着色正确、图表标题等文字无裁切。
 3. [x] **补文档**（2026-07-13）：`创新点调研与实现方案.md`"实现记录"节已补全；
        `开发进度与问题交接.md` 新增 §5.7；记忆文件已更新。
-4. [ ] **同步发布目录**：把改动文件（types.py / feature_window.py / fusion.py /
-       config.yaml / ui/panels.py / ui/plot_widget.py / PROGRESS.md / 各 .md）
-       复制到 `FatigueDetectionSystem/`。
-5. [ ] **提交 & 打 tag**：commit → push → 轮询 CI → 打 `v1.8` → 确认 Release 生成 exe。
+4. [x] **M6 交付物补齐**（2026-07-13，全仓库对照规格书扫描后补）：
+   - `参数设置说明.md`（任务书交付物，修复 运行说明.md 的断引用）；
+   - `测试指南.md`（批量回放按用户决定交给测试组员手工做，文档教他们
+     6 场景怎么测、CSV 指标怎么统计）；
+   - `README.md`（规格书 §4 目录树要求）；
+   - **GUI「参数设置」面板**（任务书"鼓励增加参数设置"拓展，至此
+     曲线/历史/参数面板三件拓展齐了）：`ui/settings_dialog.py` 新建，
+     11 个常用参数，「应用」热更新（`AlarmFSM.reconfigure` /
+     `FeatureAggregator.reconfigure`，不清滑窗不丢报警状态）、
+     「应用并保存」行级写回 config.yaml **保留全部中文注释**；
+     单测 `dev_tools/verify_settings.py` 14 项全绿，受影响回归重跑全绿。
+5. [ ] **同步发布目录 + 提交 & 打 tag**：复制改动文件到 `FatigueDetectionSystem/`
+       → commit → push → 轮询 CI → 打 `v1.8` → 确认 Release 生成 exe。
 6. [ ] 报告"创新意识"章节：按 §1/§4 组织；"未来工作"按 §3 组织（AU / KAN / 多传感器）。
 
 ---
@@ -175,5 +184,6 @@
 | 全回归验证 | ✅ 7 项全绿（2026-07-13） |
 | UI 截图确认 | ✅ 通过（2026-07-13） |
 | 文档补记（实现记录/交接） | ✅ 已补（2026-07-13） |
+| M6 交付物补齐（参数说明/测试指南/README/参数面板） | ✅ 已补（2026-07-13） |
 | 同步 FatigueDetectionSystem/ | ⬜ 待做 |
 | 提交/打 tag/Release | ⬜ 待做 |

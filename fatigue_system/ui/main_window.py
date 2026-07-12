@@ -155,6 +155,7 @@ class MainWindow(QMainWindow):
         self._control.calibrate_requested.connect(self._on_start_calibration)
         self._control.record_toggled.connect(self._on_record_toggled)
         self._control.landmarks_toggled.connect(self._on_toggle_landmarks)
+        self._control.settings_requested.connect(self._open_settings)
         self._control.stop_requested.connect(self._on_stop)
         root.addWidget(self._control)
 
@@ -217,6 +218,31 @@ class MainWindow(QMainWindow):
             self._start_loop()
         else:
             self._warn("无法打开视频文件：\n{}\n\n请确认文件编码受 OpenCV 支持。".format(path))
+
+    def _open_settings(self) -> None:
+        """「参数设置」对话框（M6 拓展）：应用后对运行中的组件热更新。"""
+        from fatigue_system.ui.settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self._config, self)
+        dlg.applied.connect(self._apply_runtime_config)
+        dlg.exec_()
+
+    def _apply_runtime_config(self) -> None:
+        """把（被参数设置面板改过的）共享配置热应用到运行中的组件。
+
+        不清滑窗统计、不丢报警状态、不重启视频源——调参不打断监测。
+        涉及在构造时缓存过配置值的所有对象。
+        """
+        self._fusion_interval = float(
+            self._config.get("fusion", {}).get("update_interval_sec", 1.0))
+        self._face_lost_sec = float(
+            self._config.get("alarm", {}).get("face_lost_sec", 3.0))
+        self._fsm.reconfigure(self._config)
+        if self._aggregator is not None:
+            self._aggregator.reconfigure(self._config)
+        self._alarm_panel.apply_config(self._config)
+        self._vcfg = self._config.get("video", {})
+        # 视频文件循环开关对当前已打开的文件源立即生效（摄像头源不读该属性）
+        self._source.loop = bool(self._vcfg.get("loop_file", False))
 
     def _on_stop(self) -> None:
         self._timer.stop()
