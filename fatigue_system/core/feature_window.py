@@ -47,11 +47,18 @@ class FeatureAggregator:
         self._fps = float(fps) if fps and fps > 0 else 20.0
 
         # 眼部
-        self._ear_closed_thresh = float(eye.get("ear_closed_thresh", 0.21))
+        self._ear_closed_thresh = float(eye.get("ear_closed_thresh", 0.21))  # 绝对回退阈值
         self._ear_closed_ratio = float(eye.get("ear_closed_ratio", 0.6))
         self._blink_min_dur = float(eye.get("blink_min_duration_sec", 0.06))
         self._perclos_win = float(eye.get("perclos_window_sec", 30))
         self._blink_win = float(eye.get("blink_window_sec", 60))
+        # 个性化闭眼阈：校准后按"睁眼均值 − k×睁眼标准差"设定（见 set_baseline）。
+        # 参考 PeerJ 2022《Adjusting EAR...》与 Soukupová&Čech 2016 的思路：固定阈值
+        # 因人而异不可靠，应贴合本人的睁眼水平与信号噪声。EAR 先做滑动平滑去抖。
+        self._ear_smooth_n = max(1, int(eye.get("ear_smooth_frames", 3)))
+        self._ear_k_std = float(eye.get("ear_closed_k_std", 2.0))
+        self._ear_smooth = deque(maxlen=self._ear_smooth_n)
+        self._cur_thresh = self._ear_closed_thresh   # 当前生效阈值
         # 嘴部
         self._mar_yawn = float(mouth.get("mar_yawn_thresh", 0.6))
         self._yawn_min_dur = float(mouth.get("yawn_min_duration_sec", 1.5))
@@ -68,24 +75,44 @@ class FeatureAggregator:
     # ------------------------------ 基线注入 ---------------------------------
 
     def set_baseline(self, baseline: Optional[Baseline]) -> None:
-        """注入个性化基线：据此把闭眼阈值改为相对本人睁眼 EAR 的比例。"""
+        """注入个性化基线：据此把闭眼阈值设为"睁眼均值 − k×睁眼标准差"。
+
+        这样阈值同时贴合本人的睁眼水平与信号噪声：睁眼越稳(std小)阈值越贴近
+        睁眼、能捕捉更小的闭合(如戴眼镜差值小的情况)；越抖则阈值下移、要求
+        更明显的闭合才算数。夹到 [50%, 92%]×睁眼均值：过低会漏检、过高(逼近
+        睁眼)会误报。
+        """
         self._baseline = baseline
         if baseline is not None and getattr(baseline, "valid", False) and baseline.ear_open_mean > 0:
-            self._ear_closed_thresh = baseline.ear_open_mean * self._ear_closed_ratio
+            mean = baseline.ear_open_mean
+            std = max(baseline.ear_open_std, 1e-4)
+            raw = mean - self._ear_k_std * std
+            self._ear_closed_thresh = min(0.92 * mean, max(0.5 * mean, raw))
 
     @property
     def ear_closed_thresh(self) -> float:
-        return self._ear_closed_thresh
+        """当前生效的闭眼阈值（自适应时为个性化中点阈；供界面显示）。"""
+        return self._cur_thresh
 
     # ------------------------------- 数据流 ----------------------------------
 
     def push(self, ff) -> None:
-        """压入一帧逐帧特征，并按最大窗口长度裁剪缓冲。"""
+        """压入一帧逐帧特征，并按最大窗口长度裁剪缓冲。
+
+        EAR 存入前先做滑动均值平滑（仅对检出人脸的帧），抑制关键点抖动，
+        避免睁闭眼差值很小时噪声造成的误判/闪烁。
+        """
         # 时间戳回退（视频文件循环播放回绕/seek）→ 清空缓冲重新累计，
         # 否则旧一轮的帧会滞留在滑窗里污染统计
         if self._buf and ff.ts < self._buf[-1][0]:
             self._buf.clear()
-        self._buf.append((ff.ts, ff.face_found, ff.ear, ff.mar, ff.pitch, ff.yaw, ff.roll))
+            self._ear_smooth.clear()
+        if ff.face_found:
+            self._ear_smooth.append(ff.ear)
+            ear = sum(self._ear_smooth) / len(self._ear_smooth)
+        else:
+            ear = ff.ear
+        self._buf.append((ff.ts, ff.face_found, ear, ff.mar, ff.pitch, ff.yaw, ff.roll))
         t_min = ff.ts - self._max_win
         while self._buf and self._buf[0][0] < t_min:
             self._buf.popleft()
@@ -99,8 +126,8 @@ class FeatureAggregator:
         return [f for f in self._buf if f[0] >= lo]
 
     def _is_closed(self, frame) -> bool:
-        """该帧是否判为闭眼（检出人脸且 EAR 低于闭眼阈值）。"""
-        return frame[1] and frame[2] < self._ear_closed_thresh
+        """该帧是否判为闭眼（检出人脸且 EAR 低于当前生效阈值）。"""
+        return frame[1] and frame[2] < self._cur_thresh
 
     # ------------------------------- 结果聚合 --------------------------------
 
@@ -110,6 +137,8 @@ class FeatureAggregator:
         if not self._buf:
             return wf
 
+        # 生效阈值：校准后为个性化统计阈，否则为绝对回退阈值
+        self._cur_thresh = self._ear_closed_thresh
         wf.perclos = self._compute_perclos()
         wf.blink_count, wf.blink_rate = self._compute_blinks()
         wf.eye_closed_dur = self._compute_longest_closed()
@@ -174,7 +203,7 @@ class FeatureAggregator:
         longest = 0.0
         run_start = None
         for ts, face, ear, mar, p, y, r in w:
-            if face and ear < self._ear_closed_thresh:
+            if face and ear < self._cur_thresh:
                 if run_start is None:
                     run_start = ts
             else:

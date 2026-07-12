@@ -43,12 +43,6 @@ _METRICS = [
      lambda ff, wf, r: _num(ff.ear) if ff and ff.face_found else _NAN, "{:.3f}"),
     ("mar", "MAR", theme.ACCENT_2, (0.0, 0.6),
      lambda ff, wf, r: _num(ff.mar) if ff and ff.face_found else _NAN, "{:.3f}"),
-    ("pitch", "俯仰角", "#a78bfa", None,
-     lambda ff, wf, r: _num(ff.pitch) if ff and ff.face_found else _NAN, "{:+.1f}°"),
-    ("yaw", "偏航角", "#c084fc", None,
-     lambda ff, wf, r: _num(ff.yaw) if ff and ff.face_found else _NAN, "{:+.1f}°"),
-    ("roll", "翻滚角", "#818cf8", None,
-     lambda ff, wf, r: _num(ff.roll) if ff and ff.face_found else _NAN, "{:+.1f}°"),
     ("perclos", "PERCLOS", "#d29922", (0.0, 1.0),
      lambda ff, wf, r: _num(wf.perclos) if wf else _NAN, "{:.0%}"),
     ("blink", "眨眼率", "#3fb950", None,
@@ -202,21 +196,26 @@ class MonitorPanel(QGroupBox):
         self._hist: Dict[str, deque] = {k: deque(maxlen=_HISTORY) for k, *_ in _METRICS}
         self._selected = _METRICS[0][0]
 
-        # 顶部：指标选择 chip（每个指标一颗，可切换）
+        # 顶部：指标选择 chip（每个指标一颗，可切换）。等宽填满、自动换行不溢出。
+        from PyQt5.QtWidgets import QSizePolicy
         chips = QGridLayout()
         chips.setSpacing(6)
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
+        cols = 5
         for i, (key, label, color, *_rest) in enumerate(_METRICS):
             btn = QPushButton(label, self)
             btn.setProperty("chip", True)
             btn.setCheckable(True)
             btn.setCursor(Qt.PointingHandCursor)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             if key == self._selected:
                 btn.setChecked(True)
             btn.clicked.connect(lambda _c, k=key: self._select(k))
             self._group.addButton(btn)
-            chips.addWidget(btn, i // 7, i % 7)
+            chips.addWidget(btn, i // cols, i % cols)
+        for c in range(cols):
+            chips.setColumnStretch(c, 1)
         root.addLayout(chips)
 
         # 中部：左曲线 + 右数值表
@@ -294,7 +293,6 @@ class MonitorPanel(QGroupBox):
 # 数值表行（含不适合画曲线的分类项：头部状态、疲劳等级）
 _TABLE_ROWS = [
     ("ear", "EAR 眼纵横比"), ("mar", "MAR 嘴纵横比"),
-    ("pitch", "俯仰角"), ("yaw", "偏航角"), ("roll", "翻滚角"),
     ("head_state", "头部状态"),
     ("perclos", "PERCLOS"), ("blink", "眨眼率 (次/分)"),
     ("closed", "最长闭眼 (s)"), ("yawn", "哈欠数"), ("nod", "点头数"),
