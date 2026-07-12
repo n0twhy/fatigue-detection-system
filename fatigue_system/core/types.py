@@ -85,11 +85,15 @@ class WindowFeatures:
     blink_count: int = 0
     eye_closed_dur: float = 0.0
     current_closed_dur: float = 0.0
+    avg_blink_dur: float = 0.0      # 创新②：窗口内平均眨眼时长（秒），微睡眠判别指标
+    microsleep_count: int = 0       # 创新②：窗口内微睡眠次数（连续闭眼 >0.5s）
     yawn_count: int = 0
     yawn_flag: bool = False
     mar_mean: float = 0.0
     head_state: str = HEAD_STATE_NORMAL
     nod_count: int = 0
+    face_ratio: float = 1.0         # 创新①：窗口内检出人脸的帧占比（信号质量代理）
+    mean_abs_yaw: float = 0.0       # 创新①：窗口内平均|偏航角|（头转越大眼部越不可靠）
     hr: Optional[float] = None
     hrv: Optional[float] = None
 
@@ -104,6 +108,8 @@ class FatigueResult:
         level_name —— 等级中文名，取自 LEVEL_NAMES[level]。
         sub_scores —— 各子分明细 {'eye','mouth','head','physio'}，取值 0..1。
         alarm      —— 是否触发预警（经防误报状态机 AlarmFSM 判定）。
+        kss        —— 创新④：Karolinska 嗜睡量表刻度 1..9（1 极清醒…9 极困）。
+        reliabilities—— 创新①：各子分实时可靠度 0..1（质量感知融合用的权重系数）。
     """
 
     score: float = 0.0
@@ -111,6 +117,8 @@ class FatigueResult:
     level_name: str = LEVEL_NAMES[0]
     sub_scores: Dict[str, float] = field(default_factory=dict)
     alarm: bool = False
+    kss: int = 1
+    reliabilities: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass

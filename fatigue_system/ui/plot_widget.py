@@ -296,9 +296,12 @@ _TABLE_ROWS = [
     ("ear", "EAR 眼纵横比"), ("mar", "MAR 嘴纵横比"),
     ("head_state", "头部状态"),
     ("perclos", "PERCLOS"), ("blink", "眨眼率 (次/分)"),
-    ("closed", "最长闭眼 (s)"), ("yawn", "哈欠数"), ("nod", "点头数"),
+    ("closed", "最长闭眼 (s)"),
+    ("avg_blink", "平均眨眼 (s)"), ("microsleep", "微睡眠 (次)"),   # 创新②
+    ("yawn", "哈欠数"), ("nod", "点头数"),
     ("hr", "心率 (bpm)"), ("hrv", "HRV (ms)"),
-    ("score", "融合分"), ("level", "疲劳等级"),
+    ("quality", "信号质量"),                                       # 创新①
+    ("score", "融合分"), ("kss", "KSS 嗜睡度"), ("level", "疲劳等级"),  # 创新④
 ]
 
 _HEAD_STATE_CN = {"normal": "正常", "lowered": "低头", "tilted": "偏头", "nodding": "点头"}
@@ -328,8 +331,17 @@ def _table_values(ff, wf, result, head_state) -> Dict[str, tuple]:
         out["nod"] = (str(wf.nod_count), theme.TEXT)
         out["hr"] = ("{:.0f}".format(wf.hr), theme.ACCENT_2) if wf.hr is not None else ("—", theme.TEXT_MUTE)
         out["hrv"] = ("{:.0f}".format(wf.hrv), theme.TEXT) if wf.hrv is not None else ("—", theme.TEXT_MUTE)
+        # 创新②：眨眼动力学
+        out["avg_blink"] = ("{:.2f}".format(wf.avg_blink_dur), theme.TEXT)
+        micro_c = theme.LEVEL_COLORS[3] if wf.microsleep_count > 0 else theme.TEXT
+        out["microsleep"] = (str(wf.microsleep_count), micro_c)
+        # 创新①：信号质量（人脸检出占比）
+        q = wf.face_ratio
+        q_color = theme.LEVEL_COLORS[0] if q >= 0.9 else (theme.LEVEL_COLORS[2] if q >= 0.5 else theme.LEVEL_COLORS[3])
+        out["quality"] = ("{:.0%}".format(q), q_color)
     if result is not None:
         color = theme.LEVEL_COLORS[int(result.level) % len(theme.LEVEL_COLORS)]
         out["score"] = ("{:.3f}".format(result.score), color)
+        out["kss"] = ("{}/9".format(result.kss), color)   # 创新④
         out["level"] = (result.level_name, color)
     return out

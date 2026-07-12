@@ -55,6 +55,8 @@ class FeatureAggregator:
         # 眨眼率最小归一化窗口：启动时窗口未填满，若直接除以极小的已过时长会让
         # 眨眼率虚高爆表（反馈#3）。用此最小分母兜底，早期宁可略低不高估。
         self._blink_rate_min_win = float(eye.get("blink_rate_min_window_sec", 15))
+        # 创新②：微睡眠判定阈（连续闭眼超此秒数记一次微睡眠）
+        self._microsleep_dur = float(eye.get("microsleep_dur_sec", 0.5))
         # 个性化闭眼阈：校准后按"睁眼均值 − k×睁眼标准差"设定（见 set_baseline）。
         # 参考 PeerJ 2022《Adjusting EAR...》与 Soukupová&Čech 2016 的思路：固定阈值
         # 因人而异不可靠，应贴合本人的睁眼水平与信号噪声。EAR 先做滑动平滑去抖。
@@ -148,6 +150,8 @@ class FeatureAggregator:
         wf.blink_count, wf.blink_rate = self._compute_blinks()
         wf.eye_closed_dur = self._compute_longest_closed()
         wf.current_closed_dur = self._compute_current_closed()
+        wf.avg_blink_dur, wf.microsleep_count = self._compute_blink_dynamics()
+        wf.face_ratio, wf.mean_abs_yaw = self._compute_signal_quality()
         yc, yflag, mar_mean = self._compute_yawn()
         wf.yawn_count = yc
         wf.yawn_flag = yflag
@@ -241,6 +245,51 @@ class FeatureAggregator:
             else:
                 break
         return now - start
+
+    def _compute_blink_dynamics(self):
+        """创新②：平均眨眼时长 + 微睡眠计数（连续闭眼 > microsleep_dur_sec）。
+
+        依据 Oxford SLEEP Advances 2023：平均眨眼时长是微睡眠(>500ms 闭眼)的最佳
+        判别指标之一，比单纯眨眼频率更能反映疲劳。返回 (平均眨眼时长秒, 微睡眠次数)。
+        """
+        w = self._window(self._blink_win)
+        durs = []
+        micro = 0
+        run_start = None
+        for f in w:
+            if self._is_closed(f):
+                if run_start is None:
+                    run_start = f[0]
+            else:
+                if run_start is not None:
+                    d = f[0] - run_start
+                    if d >= self._blink_min_dur:
+                        durs.append(d)
+                    if d >= self._microsleep_dur:
+                        micro += 1
+                run_start = None
+        if run_start is not None:      # 收尾：窗口末仍闭眼
+            d = w[-1][0] - run_start
+            if d >= self._blink_min_dur:
+                durs.append(d)
+            if d >= self._microsleep_dur:
+                micro += 1
+        avg = float(sum(durs) / len(durs)) if durs else 0.0
+        return avg, micro
+
+    def _compute_signal_quality(self):
+        """创新①：信号质量代理——近窗内检出人脸帧占比、平均|偏航角|。
+
+        供质量感知融合动态加权：人脸时有时无(占比低)→整体降权；头转得多
+        (|yaw|大)→眼部特征此时不可靠、降权。返回 (人脸占比0..1, 平均|yaw|度)。
+        """
+        w = self._window(self._perclos_win)
+        if not w:
+            return 1.0, 0.0
+        face = [f for f in w if f[1]]
+        face_ratio = len(face) / len(w)
+        mean_yaw = float(np.mean([abs(f[5]) for f in face])) if face else 0.0
+        return face_ratio, mean_yaw
 
     def _compute_yawn(self):
         """哈欠：MAR>阈值且持续≥最短哈欠时长记一次；返回(计数, 当前是否哈欠, MAR均值)。

@@ -156,7 +156,8 @@ class LevelPanel(QGroupBox):
         self._level.setText(result.level_name)
         self._level.setStyleSheet("color:{};".format(color))
         self._meter.set_score(result.score, int(result.level))
-        self._score.setText("融合分  {:.3f}".format(result.score))
+        # 融合分 + KSS 嗜睡量表刻度（创新④）
+        self._score.setText("融合分 {:.3f}   ·   KSS {}/9".format(result.score, result.kss))
         sub = result.sub_scores or {}
         for key, tile in self._sub_tiles.items():
             v = sub.get(key)
