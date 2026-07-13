@@ -22,13 +22,16 @@ from typing import Optional
 
 from fatigue_system.core.types import LEVEL_NAMES
 
-# 规格书 §6.11 固定列（顺序不可改，报告/分析脚本按此解析）
+# 规格书 §6.11 固定 20 列（顺序不可改，报告/分析脚本按此解析）；
+# 其后追加 4 个创新点指标列（第二轮组员反馈⑩：日志缺平均眨眼时长/微睡眠）——
+# 只在尾部追加、不动前 20 列，旧解析脚本按列名或前缀索引都不受影响。
 CSV_COLUMNS = [
     "timestamp", "ear", "mar", "pitch", "yaw", "roll",
     "perclos", "blink_rate", "eye_closed_dur", "yawn_count", "head_state",
     "hr", "hrv",
     "eye_score", "mouth_score", "head_score", "physio_score",
     "fatigue_score", "level", "alarm",
+    "avg_blink_dur", "microsleep_count", "face_ratio", "kss",
 ]
 
 
@@ -130,6 +133,10 @@ class DataLogger:
             _fmt(sub.get("eye")), _fmt(sub.get("mouth")),
             _fmt(sub.get("head")), _fmt(sub.get("physio")),
             _fmt(result.score), int(result.level), int(bool(result.alarm)),
+            _fmt(getattr(wf, "avg_blink_dur", 0.0), 2),
+            int(getattr(wf, "microsleep_count", 0)),
+            _fmt(getattr(wf, "face_ratio", 1.0), 2),
+            int(getattr(result, "kss", 1)),
         ])
         self._file.flush()
         self._rows += 1

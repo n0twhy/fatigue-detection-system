@@ -32,6 +32,7 @@ _FIELDS = [
     ("重度疲劳阈值 severe",            ("fusion", "level_thresholds", "severe"),   "float", 0.05, 0.95, 0.05),
     ("报警所需连续窗口（个）",          ("fusion", "alarm_consecutive_windows"),    "int",   1,   10,  1),
     ("微睡眠直接报警（秒，0=关）",      ("fusion", "microsleep_sec"),              "float", 0.0, 10.0, 0.5),
+    ("持续低头直接报警（秒，0=关）",    ("fusion", "head_down_sec"),               "float", 0.0, 60.0, 1.0),
     ("人脸丢失提示（秒）",              ("alarm", "face_lost_sec"),                "float", 1.0, 99.0, 1.0),
     ("报警声音",                       ("alarm", "sound_enable"),                 "bool"),
     ("报警弹窗",                       ("alarm", "popup_enable"),                 "bool"),

@@ -138,6 +138,8 @@ def reliabilities(wf, cfg) -> Dict[str, float]:
     - 人脸检出占比低 → 面部三模态(眼/嘴/头)整体降权；
     - 头转越大(|yaw|越大) → 眼部 EAR 越受投影影响、额外降权（3D EAR 已缓解，
       故惩罚封顶，不至于清零）；
+    - 低头越深(相对基线|pitch|越大) → 眼睑关键点越失真、眼部额外降权
+      （组员实测：低头时 EAR 幅度压缩检不到闭眼，深低头锁到眉毛，v1.9 补上）；
     - 生理靠 HR 是否可用（None 已在 fuse 里被排除），此处给满可靠度。
     """
     sub = _sub_cfg(cfg)
@@ -145,8 +147,11 @@ def reliabilities(wf, cfg) -> Dict[str, float]:
     yaw_full = float(sub.get("yaw_reliability_deg", 45.0))
     yaw_cap = float(sub.get("yaw_penalty_cap", 0.6))
     yaw_pen = min(yaw_cap, abs(getattr(wf, "mean_abs_yaw", 0.0)) / yaw_full) if yaw_full > 0 else 0.0
+    pitch_full = float(sub.get("pitch_reliability_deg", 30.0))
+    pitch_cap = float(sub.get("pitch_penalty_cap", 0.8))
+    pitch_pen = min(pitch_cap, abs(getattr(wf, "mean_abs_pitch", 0.0)) / pitch_full) if pitch_full > 0 else 0.0
     return {
-        "eye": face_ratio * (1.0 - yaw_pen),
+        "eye": face_ratio * (1.0 - yaw_pen) * (1.0 - pitch_pen),
         "mouth": face_ratio,
         "head": face_ratio,
         "physio": 1.0,
@@ -277,7 +282,13 @@ def evaluate(wf, baseline, cfg, fsm: AlarmFSM) -> FatigueResult:
     # 微睡眠硬规则：持续闭眼超过阈值 → 立即判重度并报警（反馈#1/#5）。
     # 微睡眠是最危险状态，不等 EMA 平滑与"连续N窗"慢慢累积，直接越过 FSM。
     micro = float((cfg or {}).get("fusion", {}).get("microsleep_sec", 2.0))
-    if micro > 0 and getattr(wf, "current_closed_dur", 0.0) >= micro:
+    # 持续低头硬规则（第二轮反馈⑧）：头埋下去打瞌睡时眼部特征已不可测（低头深
+    # 时眼睑关键点锁到眉毛、EAR 失真），持续低头本身就是最后可用的疲劳证据——
+    # 超过阈值同样直接判重度并报警。阈值比微睡眠长得多：低头还可能是看手机/
+    # 看资料，短暂低头不该报。
+    head_down = float((cfg or {}).get("fusion", {}).get("head_down_sec", 8.0))
+    if (micro > 0 and getattr(wf, "current_closed_dur", 0.0) >= micro) or \
+       (head_down > 0 and getattr(wf, "current_lowered_dur", 0.0) >= head_down):
         level = LEVEL_SEVERE
         alarm = True
         severe_th = float((cfg or {}).get("fusion", {}).get("level_thresholds", {}).get("severe", 0.70))

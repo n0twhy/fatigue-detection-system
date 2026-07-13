@@ -94,6 +94,9 @@ class WindowFeatures:
     nod_count: int = 0
     face_ratio: float = 1.0         # 创新①：窗口内检出人脸的帧占比（信号质量代理）
     mean_abs_yaw: float = 0.0       # 创新①：窗口内平均|偏航角|（头转越大眼部越不可靠）
+    mean_abs_pitch: float = 0.0     # 创新①：窗口内平均|相对基线俯仰角|（低头越深眼部越不可靠）
+    current_lowered_dur: float = 0.0  # 截至当前帧、正在进行的连续低头时长（秒）
+                                    # （供"持续低头硬规则"直接报警；语义同 current_closed_dur）
     hr: Optional[float] = None
     hrv: Optional[float] = None
 
@@ -130,6 +133,9 @@ class Baseline:
     字段单位：
         ear_open_mean   —— 清醒睁眼 EAR 均值（无量纲）。
         ear_open_std    —— 清醒睁眼 EAR 标准差。
+        ear_blink_min   —— 校准期间自然眨眼谷底 EAR 的中位数（本人"闭眼水平"锚点，
+                           组员建议：闭眼阈取睁眼均值与眨眼最低值之间的下三分之一处）；
+                           校准中未捕捉到可信眨眼凹陷时为 None（阈值退回 k×std 公式）。
         mar_closed_mean —— 闭口 MAR 均值。
         pitch/yaw/roll  —— 头部中性角均值（度），作为头姿判定的零点。
         hr_rest         —— 静息心率均值(bpm)；M4 有 rPPG 才有值，否则 None。
@@ -139,6 +145,7 @@ class Baseline:
 
     ear_open_mean: float = 0.30
     ear_open_std: float = 0.03
+    ear_blink_min: Optional[float] = None
     mar_closed_mean: float = 0.05
     pitch: float = 0.0
     yaw: float = 0.0

@@ -32,6 +32,11 @@ class BaselineCalibrator:
         cfg = cfg or {}
         cal = cfg.get("calibration", {})
         self._duration = float(cal.get("duration_sec", 30))
+        # 眨眼谷底锚点（组员建议）：校准期间的自然眨眼凹陷即本人"闭眼水平"
+        self._anchor_enable = bool(cal.get("blink_anchor_enable", True))
+        self._dip_k_std = float(cal.get("blink_dip_k_std", 3.0))
+        self._anchor_min_dips = int(cal.get("blink_anchor_min_dips", 2))
+        self._anchor_min_gap = float(cal.get("blink_anchor_min_gap_ratio", 0.25))
         self._ears = []
         self._mars = []
         self._pitches = []
@@ -89,6 +94,7 @@ class BaselineCalibrator:
         return Baseline(
             ear_open_mean=med,
             ear_open_std=robust_std,
+            ear_blink_min=self._detect_blink_anchor(ears, med, robust_std),
             mar_closed_mean=float(np.mean(self._mars)),
             pitch=float(np.mean(self._pitches)),
             yaw=float(np.mean(self._yaws)),
@@ -97,3 +103,35 @@ class BaselineCalibrator:
             n_samples=len(self._ears),
             valid=True,
         )
+
+    def _detect_blink_anchor(self, ears, med: float, robust_std: float) -> Optional[float]:
+        """从校准期 EAR 序列里提取"眨眼谷底"锚点（组员建议的闭眼水平参照）。
+
+        校准 30s 里人会自然眨眼（正常 15~20 次/分），眨眼谷底就是本人真实的
+        "闭眼 EAR 水平"——比只看睁眼统计、用 k×std 往下外推更贴近睁闭眼真实差距。
+
+        方法：低于 睁眼中位数 − blink_dip_k_std×稳健std 的连续段视为一次眨眼凹陷，
+        取各段最低值的中位数为锚点。两道防误用兜底（不满足则返回 None、退回 k×std）：
+          * 凹陷段数 ≥ blink_anchor_min_dips —— 没眨过眼就没有可信锚点；
+          * 锚点须比睁眼水平低 blink_anchor_min_gap_ratio 以上 —— 信号太平时
+            "凹陷"只是噪声下摆，不是真闭眼。
+        """
+        if not self._anchor_enable or len(ears) < self._MIN_SAMPLES:
+            return None
+        dip_thresh = med - self._dip_k_std * max(robust_std, 1e-4)
+        dip_mins = []
+        run_min = None
+        for v in ears:
+            if v < dip_thresh:
+                run_min = v if run_min is None else min(run_min, v)
+            elif run_min is not None:
+                dip_mins.append(run_min)
+                run_min = None
+        if run_min is not None:
+            dip_mins.append(run_min)
+        if len(dip_mins) < self._anchor_min_dips:
+            return None
+        anchor = float(np.median(dip_mins))
+        if med <= 0 or (med - anchor) / med < self._anchor_min_gap:
+            return None
+        return anchor

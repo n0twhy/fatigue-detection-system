@@ -48,6 +48,7 @@ class FeatureAggregator:
         # 缓冲：每项 = (ts, face_found, ear, mar, pitch, yaw, roll)
         self._buf = deque()
         self._baseline: Optional[Baseline] = None
+        self._pitch0 = 0.0            # 头姿俯仰零点（校准后为本人中性角）
 
     def _load_params(self, cfg) -> None:
         """从配置读入全部可调参数（__init__ 与 reconfigure 共用）。"""
@@ -66,6 +67,12 @@ class FeatureAggregator:
         self._blink_rate_min_win = float(eye.get("blink_rate_min_window_sec", 15))
         # 创新②：微睡眠判定阈（连续闭眼超此秒数记一次微睡眠）
         self._microsleep_dur = float(eye.get("microsleep_dur_sec", 0.5))
+        # 眼部特征失效俯仰角：低头超过此相对角度时眼睑关键点会锁到眉毛上
+        # （组员实测），EAR 完全失真——这些帧不参与任何眼部统计。0 关闭该门控。
+        self._eye_valid_pitch = float(eye.get("eye_valid_pitch_deg", 30))
+        # 校准"眨眼谷底锚点"生效时，闭眼阈放在 锚点+比例×(睁眼−锚点) 处（下三分之一）
+        cal = cfg.get("calibration", {})
+        self._blink_anchor_ratio = float(cal.get("blink_anchor_ratio", 0.33))
         # 个性化闭眼阈：校准后按"睁眼均值 − k×睁眼标准差"设定（见 set_baseline）。
         # 参考 PeerJ 2022《Adjusting EAR...》与 Soukupová&Čech 2016 的思路：固定阈值
         # 因人而异不可靠，应贴合本人的睁眼水平与信号噪声。EAR 先做滑动平滑去抖。
@@ -76,6 +83,7 @@ class FeatureAggregator:
         self._yawn_min_dur = float(mouth.get("yawn_min_duration_sec", 1.5))
         self._yawn_win = float(mouth.get("yawn_window_sec", 60))
         # 头部
+        self._pitch_lower = float(head.get("pitch_lower_thresh_deg", 15))
         self._nod_win = float(head.get("nod_window_sec", 10))
         self._nod_amp = float(head.get("nod_amplitude_deg", 8))
         # 判为"点头"状态所需的最少点头次数：单次偏离(如哈欠头微动)不算点头（反馈#2）
@@ -99,19 +107,29 @@ class FeatureAggregator:
     # ------------------------------ 基线注入 ---------------------------------
 
     def set_baseline(self, baseline: Optional[Baseline]) -> None:
-        """注入个性化基线：据此把闭眼阈值设为"睁眼均值 − k×睁眼标准差"。
+        """注入个性化基线，推导个性化闭眼阈值（两级方案）。
 
-        这样阈值同时贴合本人的睁眼水平与信号噪声：睁眼越稳(std小)阈值越贴近
-        睁眼、能捕捉更小的闭合(如戴眼镜差值小的情况)；越抖则阈值下移、要求
-        更明显的闭合才算数。夹到 [50%, 92%]×睁眼均值：过低会漏检、过高(逼近
-        睁眼)会误报。
+        首选**眨眼谷底锚点**（组员建议，v1.9）：校准若捕捉到可信的自然眨眼谷底
+        （即本人真实"闭眼水平"），阈值放在 锚点 + 比例×(睁眼−锚点)，默认比例 0.33
+        即"睁眼均值与眨眼最低值之间的下三分之一处"——既离睁眼噪声足够远（防误报），
+        又在眨眼谷底之上（正常眨眼也能过阈被计数）。
+
+        锚点缺失时退回 "睁眼均值 − k×睁眼标准差"：贴合本人睁眼水平与信号噪声，
+        睁眼越稳(std小)阈值越贴近睁眼、能捕捉更小的闭合(如戴眼镜差值小的情况)。
+        两种结果都夹到 [50%, 92%]×睁眼均值：过低会漏检、过高(逼近睁眼)会误报。
+        同时记录本人头姿俯仰零点，供低头判定/眼部失效门控使用。
         """
         self._baseline = baseline
         if baseline is not None and getattr(baseline, "valid", False) and baseline.ear_open_mean > 0:
             mean = baseline.ear_open_mean
-            std = max(baseline.ear_open_std, 1e-4)
-            raw = mean - self._ear_k_std * std
+            anchor = getattr(baseline, "ear_blink_min", None)
+            if anchor is not None and anchor < mean:
+                raw = anchor + self._blink_anchor_ratio * (mean - anchor)
+            else:
+                std = max(baseline.ear_open_std, 1e-4)
+                raw = mean - self._ear_k_std * std
             self._ear_closed_thresh = min(0.92 * mean, max(0.5 * mean, raw))
+            self._pitch0 = float(getattr(baseline, "pitch", 0.0))
 
     @property
     def ear_closed_thresh(self) -> float:
@@ -149,9 +167,23 @@ class FeatureAggregator:
         lo = now - sec
         return [f for f in self._buf if f[0] >= lo]
 
+    def _eye_valid(self, frame) -> bool:
+        """该帧的眼部特征是否可信：检出人脸且低头未超过失效俯仰角。
+
+        低头过深时 MediaPipe 眼睑关键点会锁到眉毛上（组员实测），EAR 数值
+        完全失真——可能被误读成"睁眼"。失真帧既不算闭眼也不算睁眼，直接
+        排除在 PERCLOS/眨眼等所有眼部统计之外（此时段的疲劳证据由头部通道
+        与"持续低头硬规则"接管）。
+        """
+        if not frame[1]:
+            return False
+        if self._eye_valid_pitch <= 0:
+            return True
+        return frame[4] - self._pitch0 <= self._eye_valid_pitch
+
     def _is_closed(self, frame) -> bool:
-        """该帧是否判为闭眼（检出人脸且 EAR 低于当前生效阈值）。"""
-        return frame[1] and frame[2] < self._cur_thresh
+        """该帧是否判为闭眼（眼部特征可信且 EAR 低于当前生效阈值）。"""
+        return self._eye_valid(frame) and frame[2] < self._cur_thresh
 
     # ------------------------------- 结果聚合 --------------------------------
 
@@ -168,7 +200,8 @@ class FeatureAggregator:
         wf.eye_closed_dur = self._compute_longest_closed()
         wf.current_closed_dur = self._compute_current_closed()
         wf.avg_blink_dur, wf.microsleep_count = self._compute_blink_dynamics()
-        wf.face_ratio, wf.mean_abs_yaw = self._compute_signal_quality()
+        wf.face_ratio, wf.mean_abs_yaw, wf.mean_abs_pitch = self._compute_signal_quality()
+        wf.current_lowered_dur = self._compute_current_lowered()
         yc, yflag, mar_mean = self._compute_yawn()
         wf.yawn_count = yc
         wf.yawn_flag = yflag
@@ -180,12 +213,13 @@ class FeatureAggregator:
         return wf
 
     def _compute_perclos(self) -> float:
+        # 分母只取眼部特征可信的帧：深低头的失真帧若计入会稀释 PERCLOS
         w = self._window(self._perclos_win)
-        face = [f for f in w if f[1]]
-        if not face:
+        valid = [f for f in w if self._eye_valid(f)]
+        if not valid:
             return 0.0
-        closed = sum(1 for f in face if self._is_closed(f))
-        return closed / len(face)
+        closed = sum(1 for f in valid if f[2] < self._cur_thresh)
+        return closed / len(valid)
 
     def _compute_blinks(self):
         """眨眼统计：闭眼连续段按"闭眼时长"去抖后计数。
@@ -231,13 +265,13 @@ class FeatureAggregator:
         w = self._window(self._perclos_win)
         longest = 0.0
         run_start = None
-        for ts, face, ear, mar, p, y, r in w:
-            if face and ear < self._cur_thresh:
+        for f in w:
+            if self._is_closed(f):
                 if run_start is None:
-                    run_start = ts
+                    run_start = f[0]
             else:
                 if run_start is not None:
-                    longest = max(longest, ts - run_start)
+                    longest = max(longest, f[0] - run_start)
                 run_start = None
         if run_start is not None:   # 收尾：窗口末仍闭眼，保守用末帧时刻
             longest = max(longest, w[-1][0] - run_start)
@@ -252,12 +286,12 @@ class FeatureAggregator:
         if not self._buf:
             return 0.0
         last = self._buf[-1]
-        if not (last[1] and last[2] < self._cur_thresh):
+        if not self._is_closed(last):
             return 0.0
         now = last[0]
         start = now
         for frame in reversed(self._buf):     # 从末尾往前扩展连续闭眼段
-            if frame[1] and frame[2] < self._cur_thresh:
+            if self._is_closed(frame):
                 start = frame[0]
             else:
                 break
@@ -295,18 +329,47 @@ class FeatureAggregator:
         return avg, micro
 
     def _compute_signal_quality(self):
-        """创新①：信号质量代理——近窗内检出人脸帧占比、平均|偏航角|。
+        """创新①：信号质量代理——近窗内检出人脸帧占比、平均|偏航角|、平均|相对俯仰角|。
 
         供质量感知融合动态加权：人脸时有时无(占比低)→整体降权；头转得多
-        (|yaw|大)→眼部特征此时不可靠、降权。返回 (人脸占比0..1, 平均|yaw|度)。
+        (|yaw|大)→眼部特征此时不可靠、降权；低头越深(相对基线俯仰角越大)→
+        眼睑关键点越失真、眼部降权（组员实测：低头时 EAR 变化幅度压缩、检不到
+        闭眼，深低头时索引甚至锁到眉毛）。返回 (人脸占比, 平均|yaw|, 平均|Δpitch|)。
         """
         w = self._window(self._perclos_win)
         if not w:
-            return 1.0, 0.0
+            return 1.0, 0.0, 0.0
         face = [f for f in w if f[1]]
         face_ratio = len(face) / len(w)
         mean_yaw = float(np.mean([abs(f[5]) for f in face])) if face else 0.0
-        return face_ratio, mean_yaw
+        mean_pitch = float(np.mean([abs(f[4] - self._pitch0) for f in face])) if face else 0.0
+        return face_ratio, mean_yaw, mean_pitch
+
+    def _compute_current_lowered(self) -> float:
+        """当前正在进行的连续低头时长（秒）；最新帧未低头则为 0。
+
+        低头 = 相对基线俯仰角超过 head.pitch_lower_thresh_deg。语义同
+        current_closed_dur（从缓冲末尾往前扩展），供"持续低头硬规则"用：
+        打瞌睡头埋下去后眼部特征已不可测（组员实测锁到眉毛/脸测不到），
+        持续低头本身就是最后可用的疲劳证据。
+        """
+        if not self._buf:
+            return 0.0
+        last = self._buf[-1]
+
+        def _lowered(f):
+            return f[1] and (f[4] - self._pitch0) > self._pitch_lower
+
+        if not _lowered(last):
+            return 0.0
+        now = last[0]
+        start = now
+        for frame in reversed(self._buf):     # 从末尾往前扩展连续低头段
+            if _lowered(frame):
+                start = frame[0]
+            else:
+                break
+        return now - start
 
     def _compute_yawn(self):
         """哈欠：MAR>阈值且持续≥最短哈欠时长记一次；返回(计数, 当前是否哈欠, MAR均值)。
