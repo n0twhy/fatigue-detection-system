@@ -172,6 +172,25 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central)
 
+    def warmup(self) -> None:
+        """预热重型组件（启动加载阶段调用，见 app.main 的「载入中」窗口）。
+
+        mediapipe 首次推理会现场建计算图（实测卡好几秒）。不预热的话，这份开销会
+        落在用户点「开始监测」的那一刻，界面直接"未响应"。
+        """
+        if self._detector is not None:
+            self._detector.warmup()
+
+    def _busy(self, message: str) -> None:
+        """打开视频源前的即时反馈：先把提示画出来，再去做可能阻塞的事。
+
+        打开摄像头/解码首帧可能要一两秒（USB 摄像头协商更久），期间事件循环被占住，
+        窗口会显示"未响应"。先 show_message + processEvents，用户至少知道在干活。
+        """
+        self._video.show_message(message)
+        self._control.set_fps("正在打开…", theme.TEXT_MUTE)
+        QApplication.processEvents()
+
     def _auto_start(self) -> None:
         default_source = str(self._vcfg.get("default_source", "camera")).lower()
         if default_source == "camera" and self._control.camera_available():
@@ -193,17 +212,23 @@ class MainWindow(QMainWindow):
             self._on_open_file(value)
 
     def _on_open_camera(self, index: int) -> None:
+        self._busy("正在打开摄像头…")
         if self._source.open_camera(int(index)):
             self._start_loop()
         else:
+            self._video.show_message("无视频源\n\n请选择摄像头，或打开视频文件")
+            self._control.set_fps("已停止", theme.TEXT_MUTE)
             self._warn("打开摄像头 [{}] 失败。设备可能被占用或不可用。".format(index))
 
     def _on_open_file(self, path: str) -> None:
         # 默认播完自动停止（不循环），便于单遍回放测试（组员反馈）；config 可开循环
+        self._busy("正在打开视频…")
         self._source.loop = bool(self._vcfg.get("loop_file", False))
         if self._source.open_file(path):
             self._start_loop()
         else:
+            self._video.show_message("无视频源\n\n请选择摄像头，或打开视频文件")
+            self._control.set_fps("已停止", theme.TEXT_MUTE)
             self._warn("无法打开视频文件：\n{}\n\n请确认文件编码受 OpenCV 支持。".format(path))
 
     def _open_settings(self) -> None:

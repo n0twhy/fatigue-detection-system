@@ -104,6 +104,22 @@ class FaceMeshDetector:
         r, g, b = allpix.mean(axis=0)
         return float(r), float(g), float(b)
 
+    def warmup(self) -> None:
+        """预热：先拿一张空白图跑一次推理，把 TFLite 计算图/GPU 上下文建起来。
+
+        mediapipe 的**首次** process() 会现场初始化计算图，实测要卡好几秒——
+        若等用户点「开始监测」时才发生，界面就会"未响应"一下。启动加载阶段
+        （载入中画面还在）先跑一次空推理，把这份开销挪到用户看得见"正在加载"的
+        时候。失败也无所谓（只是没预热成），不影响正常使用。
+        """
+        if self._mesh is None:
+            return
+        try:
+            blank = np.zeros((480, 640, 3), dtype=np.uint8)
+            self.process(blank)
+        except Exception:
+            pass
+
     def close(self) -> None:
         """释放 MediaPipe 资源。"""
         if self._mesh is not None:

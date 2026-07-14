@@ -505,9 +505,15 @@ class ControlPanel(QFrame):
         lay.addWidget(title)
 
         self._camera_combo = QComboBox(self)
-        self._camera_combo.setMinimumWidth(190)
+        self._camera_combo.setMinimumWidth(170)
         self._camera_combo.activated.connect(self._on_source_activated)
         lay.addWidget(self._camera_combo)
+
+        # 打开视频文件：独立按钮（用户要求；描边样式，不与唯一实心主按钮抢视觉）
+        self._btn_file = QPushButton("打开视频文件", self)
+        self._btn_file.setCursor(Qt.PointingHandCursor)
+        self._btn_file.clicked.connect(self._pick_file)
+        lay.addWidget(self._btn_file)
 
         lay.addStretch(1)
 
@@ -541,7 +547,10 @@ class ControlPanel(QFrame):
     # ------------------------------ 视频源下拉 --------------------------------
 
     def refresh_cameras(self) -> None:
-        """重建下拉：摄像头列表 + 打开视频文件… + 刷新设备列表。"""
+        """重建下拉：摄像头列表（+ 已打开的视频文件项）+ 刷新设备列表。
+
+        「打开视频文件」已独立成按钮，不再挤在下拉里。
+        """
         current = self._camera_combo.currentData()
         self._camera_combo.blockSignals(True)
         self._camera_combo.clear()
@@ -553,11 +562,9 @@ class ControlPanel(QFrame):
             self._camera_combo.addItem("（未检测到摄像头）", ("none", None))
         if self._file_item_path:
             self._camera_combo.addItem(
-                "文件：{}".format(os.path.basename(self._file_item_path)),
+                "视频：{}".format(os.path.basename(self._file_item_path)),
                 ("file", self._file_item_path))
-        self._camera_combo.addItem("打开视频文件…", ("pick_file", None))
         self._camera_combo.addItem("刷新设备列表", ("refresh", None))
-        # 尽量恢复原选中项
         if current is not None:
             pos = self._camera_combo.findData(current)
             if pos >= 0:
@@ -570,8 +577,6 @@ class ControlPanel(QFrame):
             self.open_camera_requested.emit(int(value))
         elif kind == "file":
             self.open_file_requested.emit(value)
-        elif kind == "pick_file":
-            self._pick_file()
         elif kind == "refresh":
             self.refresh_cameras()
 

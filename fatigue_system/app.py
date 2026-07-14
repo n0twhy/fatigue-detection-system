@@ -268,16 +268,37 @@ def main(argv=None) -> int:
     from PyQt5.QtWidgets import QApplication
     from PyQt5.QtCore import QTimer
 
-    # MainWindow 会导入 cv2，cv2 会劫持 Qt 插件路径；导入后立即纠正
-    from fatigue_system.ui.main_window import MainWindow
-
     _use_pyqt5_qt_plugins()  # 必须在 QApplication 之前
 
     app = QApplication(sys.argv[:1])
     _setup_cjk_font(app, config)  # 设置中文字体，避免界面方块乱码
     from fatigue_system.ui import theme
-    app.setStyleSheet(theme.STYLESHEET)   # 深色现代主题
+    app.setStyleSheet(theme.STYLESHEET)
+
+    # ---------------------- 先出「载入中」窗口，再加载重库 ----------------------
+    # 为什么：exe 双击后要等 1~2 分钟才出界面——Windows Defender 会逐个扫描
+    # PyInstaller 包里数百个无签名 DLL（mediapipe/opencv/PyQt 等），这是它的正常
+    # 行为，我们关不掉、也不能要求老师关。既然快不了，就**别让用户面对一片空白**：
+    # 先把窗口显示出来告诉他"正在加载、约需 1~2 分钟"，再去 import 那些重库。
+    from fatigue_system.ui.loading import LoadingWindow
+    loading = LoadingWindow()
+    loading.show()
+    app.processEvents()          # 强制立刻绘制，别等事件循环
+
+    # 重库在此刻才导入（cv2 会劫持 Qt 插件路径，导入后要再纠正一次）
+    loading.set_step("正在加载视觉模块…")
+    app.processEvents()
+    from fatigue_system.ui.main_window import MainWindow
+    _use_pyqt5_qt_plugins()
+
+    loading.set_step("正在初始化人脸关键点模型…")
+    app.processEvents()
     window = MainWindow(config)
+    # 预热 mediapipe：首次推理会现场建计算图（要好几秒），不预热的话这份卡顿会
+    # 落在用户点「开始监测」的那一刻，界面显示"未响应"。
+    window.warmup()
+
+    loading.close()
     window.show()
 
     if args.selftest is not None:
