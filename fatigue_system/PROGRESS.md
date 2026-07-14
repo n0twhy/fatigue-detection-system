@@ -183,6 +183,202 @@ pitch 纳入创新①可靠度/持续低头 8s 硬规则）、校准升级眨眼
        无锚点退回 k×std）+ 回退阈 0.21→0.15（CEW 实测：误报瘫痪人群 3%→1%）；
        ⑩CSV 尾部追加 avg_blink_dur/microsleep_count/face_ratio/kss 四列。
        单测 `dev_tools/verify_round2_fixes.py` 25 项全绿、既有回归 7 套全绿。
+       已推 main（b82d5fb，CI 绿）；**用户拍板暂不打 tag**——等 UI 高级化改版
+       （用户提供样图+design.md）完成后一起发 v1.9。
+8. [ ] **UI 高级化改版**（2026-07-14 用户发起，**进行中**）：
+   - **设计规范：`EXPWORK/DESIGN.md`（UI 唯一事实来源，苹果风浅色极简）+ 两张样图**
+     （主界面：白底卡片布局/顶部工具栏/右侧等级卡/底部曲线+指标列表；设置面板：
+     overlay 弹层）。§10 分 7 阶段实施，**每阶段完成后必须停下等用户截图确认**。
+   - **阶段进度（断点续跑看这里）**：
+     1. [x] 主题层（2026-07-14 完成，**等用户截图确认**）：`ui/theme.py` 全量重写
+        （保留旧常量名映射到浅色新值+新增 §2-§4/§7.0 全部常量）；顺带把三处写死
+        的深色接到常量：`plot_widget.py` 画布底→SURFACE、`panels.py` 报警横幅三态
+        →浅色状态色、`video_widget.py` 容器→VIDEO_BG(#1A1A1C 深色特例)。
+        预览图：`fatigue_system/outputs/ui_preview/phase1_{idle,state,settings}.png`
+        （离屏截图脚本在会话 scratchpad shot_phase1.py，丢了可照 PROGRESS 重写）。
+        已验证：截图渲染正常、无崩溃。旧布局元素（FM logo/英文副标题/底部按钮排/
+        chips/表格/旧设置对话框）属阶段 2-5/7 范围，本阶段刻意未动。
+     2. [x] 顶部工具栏（2026-07-14 完成，**等用户截图确认**）：`panels.py` ControlPanel
+        重写为 §5.1 工具栏（应用名/合并源下拉[摄像头N/文件/打开文件…/刷新]/绿点fps/
+        校准·记录·设置三个 QPainter 手绘线性图标按钮/唯一实心主按钮 开始监测(蓝)↔
+        停止监测(红)，新增 start_requested 信号+set_running/set_fps/current_source）；
+        `widgets.py` 新增 IconButton/StatusDot；`main_window.py` 删旧头栏(FM logo/
+        英文副标题/StatusPill)与底部按钮排、接 _on_start、状态行改 §5.5 格式；
+        theme.py 补 appTitle/statusDot/iconbtn QSS。"关键点"开关按 §5.2 待阶段5
+        移入视频角（期间默认开启无开关）。预览：ui_preview/phase2_running.png
+        （真实视频全流程 29fps 验证）+ phase2_state.png。selftest exit 0。
+     3. [x] 右侧信息栏（2026-07-14 完成，**等用户截图确认**）：LevelPanel 重写为
+        §5.3 等级卡（小标签/30px 等宽大数字融合分/LEVEL_BADGES 胶囊/KSS 12px 灰/
+        眼部·嘴部·头部·生理 四行 ThinBar 4px 细进度条——超过 fusion.moderate 阈值
+        才变橙，构造签名改为 LevelPanel(cfg, parent)）；AlarmPanel 改单行状态卡
+        （圆点+同色文字 | 右侧"累计 N 次"，声音/弹窗/热更新逻辑原样保留）；
+        widgets.py 新增 ThinBar；右列布局=等级卡撑满+报警单行。
+        预览：ui_preview/phase3_running.png。selftest exit 0。
+     4. [x] 指标监测区（2026-07-14 完成，**等用户截图确认**）：`plot_widget.py` 全量
+        重写——左曲线卡（标题"某指标 · 近 60 秒"；曲线统一强调蓝 2px+8% 填充；
+        仅融合分画三条阈值虚线并右端标"轻/中/重 x.xx"（读 config，调参即时反映）；
+        x 轴只标 -60s/现在；历史缓存改 (ts,val) 真实 60s 时间窗）+ 右指标列表卡
+        （MetricRow 行=名称+当前值，点击可切曲线、选中行浅蓝圆角；常用 5 项+
+        "更多指标"手绘 chevron 折叠 11 项；替代旧 10 颗 chip+QTableWidget）。
+        列表卡宽度 400-480 与右上信息栏对齐。基线文案按 §5.5 移入底部状态行
+        （详细基线数据放悬停提示），MonitorPanel 签名改 (cfg, parent)、
+        set_baseline_text 移除。预览：ui_preview/phase4_running.png。selftest exit 0。
+        **4b 布局微调（用户反馈：等级卡留白大、窗口要方）**：等级卡四行分量改
+        弹性均匀分布（行间 stretch，高卡不留死白）；默认窗口 1500×1000→1280×1120
+        （样图方形比例，min 1000×860）；上下两段 3:2→11:9；视频区最小尺寸
+        640×480→480×360。预览：ui_preview/phase4b_running.png。
+        **4c 尺度放大（用户反馈：比样图小一号；DESIGN.md 与样图冲突→以样图为准，
+        决定已写回 DESIGN.md §0.2）**：全局 13→14px、工具栏 52→64、应用名 16px、
+        主按钮 15px、大数字 30→38px、badge/分量 13px、分量条 4→6px、卡片内边距
+        16→20、列表行 38→44px、图标钮 32→36。预览：ui_preview/phase4c_running.png。
+     5. [x] 视频区浮层（2026-07-14 完成，**等用户截图确认**）：`video_widget.py`
+        重写——删左上绿字 ASCII 调试框（draw_hud 保留但不再调用，dev_tools 兼容）；
+        新增 _OverlayPill（§2.4 半透明胶囊：右上"人脸 正常/丢失"绿/深两态、左下
+        "EAR·MAR·姿态"数值）与 _LandmarkToggle（右下 30px 圆钮 3×3 点阵，切换
+        关键点叠加，VideoWidget.landmarks_toggled 信号）；浮层贴角自适应、无画面
+        自动隐藏。ControlPanel 的过渡 landmarks_toggled 信号删除。
+        预览：ui_preview/phase5_running.png。selftest exit 0。
+        **5b/5c 顶栏两轮放大（用户反馈"改得太保守"，样图右侧集群≈顶栏宽 40%）**：
+        最终 工具栏 88 高、应用名 20px、图标钮 48px(半径12/线宽2.0)、主按钮
+        17px(12×28)、下拉 16px、状态字 16px、间距 18；DESIGN.md §0.2 已同步。
+        预览：ui_preview/phase5c_running.png。
+        **5d 指标列表填满（用户反馈：卡片留白多就多放指标）**：常用区 5→8 项，
+        提升 最长闭眼/微睡眠(创新②)/KSS(创新④) 出折叠区，正好铺满卡片。
+        预览：ui_preview/phase5d_running.png。
+     6. [x] 动画层（2026-07-14 定时接力完成，**等用户确认**）：新增 `ui/anim.py`
+        （QVariantAnimation 统一封装，OutCubic/InCubic）。已实现：图标钮悬停底色
+        150ms+按下图标缩 0.92（手绘，QSS 悬停规则移除）；指标行悬停 150ms/选中
+        底色+文字色 180ms 三项同步；曲线切换交叉淡化 220ms（TimeSeriesChart 持旧
+        曲线快照按 _fade 双绘，阈值线随淡入淡出）；ThinBar 数值 200ms 平滑推移+
+        灰↔橙颜色插值；报警行出现=淡入+上移4px 220ms、解除=红→绿颜色过渡 250ms
+        （人脸丢失同套处理）；等级 badge 变级颜色插值 250ms。**两处按规范取舍**：
+        融合分大数字不加动画（§7.0纪律3/§7.3 明文：数据流更新不动画，台账旧指令
+        与此冲突以 DESIGN.md 为准）；badge 重度脉冲放大未做（§7.3"允许"非必须，
+        QLabel 缩放会引起邻元素跳动）。数据流刷新（视频帧/曲线追加/数值行）一律
+        无动画（§7.8）。
+     7. [x] 设置面板（2026-07-14 定时接力完成，**等用户确认**）：settings_dialog.py
+        重构为主窗口内 overlay——压暗层 rgba(0,0,0,0.28)+380px 白面板 14px 圆角+
+        手绘软阴影（注意：外层已挂透明度效果，Qt 不支持嵌套 QGraphicsEffect，
+        DropShadow 会把子树渲染成空白，故阴影手绘；面板/分组 QSS 必须用
+        objectName 限定——QLabel 继承 QFrame，裸 QFrame 选择器会给所有标签套框）。
+        打开=淡入+0.95→1.00 220ms，关闭=淡出+缩回0.97 150ms InCubic；点压暗区/
+        Esc=取消；跟随主窗口缩放。内容 6 项（用户定稿）：疲劳阈值组 轻/中/重
+        （mild<moderate<severe 校验保留）+ 报警组 报警声音/报警弹窗/视频循环播放
+        （widgets.py 新增 Switch：48×28 全圆轨道，§7.6 滑块+轨道色 180ms 同步）。
+        取消(描边)+完成(蓝实心=应用+写回)。rewrite_yaml_values 行级保注释写回与
+        applied→_apply_runtime_config 热更新链路原样保留；IconButton 新增 close
+        图标。verify_settings.py 字段断言按 6 项更新（14 项全绿）。
+        **验证汇总**：selftest exit 0；verify_round2_fixes 25 项全绿；预览
+        ui_preview/phase6_running.png、phase7_settings.png（与样图二一致）。
+        **未做任何 push/tag/发布目录同步——等用户确认后统一处理。**
+   - **【给接力会话的执行指令（2026-07-14 用户授权：额度中断，4h 后自动续跑，
+     做完 6+7 停下等用户确认；期间禁止 push/tag/同步发布目录）】**：
+     1) 先读 EXPWORK/DESIGN.md（§7 动画规范 + §7.7/§8 设置面板）；UI 代码在
+        fatigue_system/ui/（theme.py 常量含 ANIM_FAST/BASE/SLOW；样式全走 theme）。
+     2) **阶段6 动画**（不改布局）：a. 按钮/列表行悬停底色过渡 150ms OutCubic
+        （QVariantAnimation 颜色插值；QSS 无 transition）；按下 scale 0.98。
+        b. 指标切换（plot_widget.MetricRow.clicked→MonitorPanel._select）：曲线
+        交叉淡化 220ms（方案A：旧新两条曲线透明度互换，自绘 Chart 可在 paint 时
+        按 progress 混合两组点）+ 选中行底色/文字色过渡 180ms + 大数字滚动插值
+        220ms（LevelPanel._score 数值插值）。c. ThinBar 数值/灰橙颜色 200ms 插值
+        （widgets.ThinBar 内加 QVariantAnimation）。d. AlarmPanel 状态行：报警出现
+        淡入+上移4px 220ms，解除仅颜色过渡 250ms。e. LevelPanel badge 颜色插值
+        250ms；进入重度时 badge 一次性 scale 1.0→1.06→1.0 300ms（禁循环闪烁）。
+        禁止：>300ms、Linear、弹跳、给视频帧/曲线实时追加加动画（§7.8）。
+     3) **阶段7 设置面板**：settings_dialog.py 重构为主窗口内 overlay（压暗层
+        rgba(0,0,0,0.28) + 340px 白面板 14px 圆角 + 阴影）；打开 220ms
+        透明度0→1+缩放0.95→1.00（geometry 动画），关闭 150ms 反向到 0.97；
+        点压暗区/Esc=取消。**内容 6 项（用户定稿）**：疲劳阈值组(轻/中/重,
+        mild<moderate<severe 校验保留) + 报警组(报警声音/报警弹窗 Switch) +
+        其他(视频循环播放 Switch)；Switch 按 §6（36×22 全圆轨道，开启 #34C759，
+        滑块位移 180ms）。底部 取消(描边)+完成(蓝实心,应用并写回)。
+        **保留 rewrite_yaml_values 行级写回与 MainWindow._apply_runtime_config
+        热更新链路**（settings_dialog 的 applied 信号）。尺寸参照 §0.2 校准值
+        （样图优先，别做小）。
+     4) 验证：QT_QPA_PLATFORM=offscreen python -m fatigue_system.app --selftest 6
+        （项目根跑，conda env rppg-toolbox）exit 0；离屏截图脚本参考台账阶段1-5
+        （用 data/Test/subject1/vid.avi 开源跑 6s grab 保存到
+        fatigue_system/outputs/ui_preview/phase6_running.png / phase7_settings.png）；
+        跑 dev_tools/verify_settings.py（改了 settings_dialog 后必须绿，若字段
+        清单变了按新 6 项修断言并在处理记录注明）+ verify_round2_fixes.py。
+     5) 完成后：更新本清单 6/7 为 [x]（写明改动文件/预览图路径/验证结果），
+        **停止，等用户确认**。不 push、不 tag、不动 FatigueDetectionSystem/。
+   - **参数面板最终定稿（用户 2026-07-14 拍板，覆盖 DESIGN.md §8 的"判定参数"组）**：
+     共 6 项 = 疲劳阈值(轻/中/重) + 报警声音 + 报警弹窗 + 视频循环播放，与样图二
+     一致。任务书核实：面板属"鼓励"拓展非必备；交付物《参数设置说明.md》文档保留。
+   - **启动画面+延迟导入**（随本轮一起做）：exe 每次启动 1~2 分钟＝Defender 实时
+     扫描无签名包（老师会亲自开 exe，不能让他关 Defender）。方案：PyInstaller
+     pyi_splash（bootloader 级秒出图）+ 应用内加载页，重库导入推迟。onedir 已确认。
+   - 全部完成并经用户确认后才发 v1.9（连同已保留的第二轮反馈三项修复）。
+
+---
+
+### 5.11【✅ 2026-07-15 v1.11】老师建议的三个新功能（**等用户确认**）
+1. [x] **会话报告**（`io/session_report.py`）：停止记录时**自动生成单文件 HTML**
+   报告并提示路径（历史面板里也可对任意历史会话补生成）。含：会话概览（时长/报警
+   次数/平均 KSS/记录行数）、**疲劳等级时间线色带**、各等级时长占比、融合分曲线
+   （带三条阈值虚线）、PERCLOS/心率曲线、报警时刻、基线与关键阈值摘要。
+   曲线为**内联 SVG 手绘**——单文件、零 JS/CSS/网络依赖，双击即开、可直接插进课程
+   报告。数据源＝已落盘的明细 CSV（不重跑检测）。配色取自 theme.py。
+2. [x] **历史会话回看**（`ui/history_dialog.py`）：顶栏新增「历史」按钮（时钟图标）→
+   overlay 面板：左侧列出 outputs/ 下历次会话（按时间倒序），选中即显示概览 +
+   等级时间线色带 + 融合分曲线（**读 CSV 重绘，不重跑视频、不占摄像头、不打断当前
+   监测**），一键「导出报告」并用系统默认程序打开（Windows/WSL/Linux 三种打开方式）。
+3. [x] **疲劳趋势预警**（`core/trend.py` + `config.yaml` trend 段）：对融合分做滑窗
+   **最小二乘线性回归**，斜率 ≥ slope_per_min(0.05/分) 且分数已离开清醒噪声区
+   (min_score 0.20) 且连续 hold_windows(3) 满足 → 在预警区给一行温和提示
+   "疲劳正在累积（评分持续上升 x.xx/分），建议休息"。**它不是报警**：不走 AlarmFSM、
+   不响铃、不弹窗、不计入报警次数，且有 5 分钟冷却——刻意设计成不会变成新的误报源。
+   体现任务书要求的"预**警**"（事前）而非"报警"（事后）。
+- 验证：`dev_tools/verify_v111_features.py` **18 项全绿**（含"清醒平稳不提示"、
+  "低分噪声区上升不提示"、"报告是单文件无外部依赖"、"历史面板统计正确"等）；
+  全回归 **10 套全绿** + selftest exit 0。
+- 预览：`ui_preview/v111_toolbar.png`（校准/记录/历史/设置 四个带标签按钮）、
+  `v111_history.png`（历史面板）；示例报告已生成到 Windows 桌面 `会话报告示例.html`。
+
+### 5.10【✅ 2026-07-15 v1.10】老师反馈：办公场景被连报几十次（**误报根因修复**）
+
+**现象**：老师打开软件后最小化、自己在电脑前干活，被报警三四十次。
+**复现**（`dev_tools/verify_false_alarm_fix.py` 场景 A1，10 分钟办公+每 30s 低头看
+键盘 8s）：**修复前报警 20 次**（首次 t=8s），重度窗口占比 22%。
+
+**根因（两条硬规则 + 一个设计缺口）**：
+1. **低头看键盘时 EAR 被"下视"压低**（实测 0.13~0.14 vs 未校准阈值 0.15）→ 被当成
+   闭眼 → **微睡眠硬规则 2 秒就直接判重度报警**；
+2. **持续低头 8s 硬规则**：看键盘/看资料 8 秒是日常动作，必然误报；
+3. **没有"多特征同时满足"的要求**（正是老师指出的）：单一通道就能顶到重度。
+   更隐蔽的是——低头会**同时**压低 EAR 并触发低头，看似"眼+头两个特征互相印证"，
+   实为**同一动作的产物**，是假的相互印证。
+
+**修复（六条，全部配置驱动）**：
+1. `eye.eye_valid_pitch_deg` 30→**15**：低头超阈时眼部 EAR 判为不可信，不进任何眼部
+   统计（下视压低 EAR 是注视方向的产物，不是困倦）。
+2. `head.auto_neutral_pitch`（新）：未校准时自动估计俯仰零点＝缓冲内 **25 分位数**
+   （solvePnP 正视时 pitch≈+14° 而非 0，因人而异；中位数在"低头占比近半"时会被抬高
+   → 实测启动 12s 误报一次）；并**单调不上升**（直立是 pitch 下界，长时间埋头不得把
+   零点带偏——否则真趴睡的人趴一会儿后系统反以为坐得很正，实测 PERCLOS 0→0.79）。
+3. `eye.deep_closed_ratio` / `deep_closed_margin_ratio`（新）+ `WindowFeatures.
+   current_deep_closed_dur`：微睡眠硬规则改用**深度闭眼阈**（真闭眼 EAR≈0.078 ≪
+   下视压低的 0.13）。**不依赖任何姿态推断**，即使"开机时就低着头"导致零点被带偏
+   也不会误报（这是第二道独立保险）。
+4. `fusion.microsleep_min_eye_reliability`（新，0.6）：微睡眠硬规则要求眼部实时可靠度
+   达标（低头/侧脸/丢脸时不认）。
+5. `fusion.head_down_sec` 8→**20**：低头看东西是日常，8 秒太短；真埋头打瞌睡会持续更久。
+6. **多特征证据门**（老师建议的核心）`fusion.evidence_subscore_thresh`(0.5) +
+   `severe_min_channels`(2)：进入"重度区"至少需 2 个**独立**模态各自给出证据，否则
+   融合分封顶在重度线之下（最高只到"中度"预警，不报警）。
+   \+ `alarm.cooldown_sec`(30)：报警解除后冷却，防止分数在阈值上下抖动来回触发。
+
+**验证（双向，缺一不可）** `dev_tools/verify_false_alarm_fix.py` 13 项全绿：
+- 不该报的不报：办公+低头看键盘 10min **0 次**（原 20 次）、连续低头 15s 写字 0 次、
+  说话 5min 0 次；
+- 该报的照报：真微睡眠（正常坐姿持续闭眼）**6s 报警**、真综合疲劳（眼+嘴+头）报警、
+  真趴睡（持续埋头 >20s）**50s 报警**、冷却期生效。
+- 全回归 8 套全绿。**两个旧断言按新语义重写**（`verify_m3_fusion` ⑤"低头+EAR降→中度"
+  正是老师投诉的误报机制，改为"低头前 20s 不报警 + 眼部判不可信 + 持续 20s 才由硬
+  规则判重度"；`verify_round2_fixes` ⑧ 硬规则阈 8s→20s 相应放宽）。
+
+**UI**：顶栏三个图标按钮加文字标签（校准/记录/设置，老师建议——纯图标看不出功能）。
 
 ---
 

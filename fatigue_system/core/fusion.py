@@ -200,6 +200,10 @@ class AlarmFSM:
         # 创新③：置信度自适应决策窗口——多模态一致高疲劳时可少等几窗即报警
         self._adaptive_reduction = int(fusion_cfg.get("adaptive_alarm_reduction", 2))
         self._agree_conf = int(fusion_cfg.get("agreement_for_confident", 2))
+        # 报警冷却（v1.10）：报警解除后的静默窗口数，防止"报警-解除-报警"反复刷屏
+        interval = float(fusion_cfg.get("update_interval_sec", 1.0)) or 1.0
+        cooldown_sec = float((cfg or {}).get("alarm", {}).get("cooldown_sec", 30.0))
+        self._cooldown_windows = int(round(cooldown_sec / interval))
 
     def reset(self) -> None:
         """复位（切换视频源/重新开始检测时调用）。"""
@@ -208,6 +212,16 @@ class AlarmFSM:
         self._severe_run = 0
         self._calm_run = 0
         self._alarm = False
+        self._cooldown = 0
+
+    def force_alarm(self) -> None:
+        """硬规则（微睡眠/持续低头）直接报警时同步 FSM 状态。
+
+        否则 FSM 自身仍认为"未报警"，硬规则一解除就会出现状态抖动；
+        也让冷却期从这次报警结束后开始计。
+        """
+        self._alarm = True
+        self._cooldown = 0
 
     def update(self, level: int, score: float, agreement: int = 0) -> bool:
         """喂入一个窗口的（原始等级, 原始融合分, 高疲劳子分一致数），返回是否报警。
@@ -216,6 +230,8 @@ class AlarmFSM:
         平滑值）。**创新③**：当多个子分一致指向高疲劳（agreement≥阈值）时，说明
         证据充分、置信度高，缩短所需"连续重度窗口数"以更快报警；证据单薄时维持
         原窗口数谨慎判定——在灵敏与防误报间自适应（参考 Frontiers 2026）。
+        **报警冷却（v1.10）**：解除后 alarm.cooldown_sec 内不再因评分再次报警，
+        避免评分在重度线上下抖动时反复触发（老师实测被连报几十次）。
         """
         if self._ema is None:
             self._ema = float(score)
@@ -230,16 +246,25 @@ class AlarmFSM:
             self._calm_run += 1
             self._severe_run = 0
 
+        if self._cooldown > 0:
+            self._cooldown -= 1
+
         # 置信度自适应：证据一致时减少所需连续窗口数（至少 1）
         n_alarm = self._n_alarm
         if agreement >= self._agree_conf:
             n_alarm = max(1, self._n_alarm - self._adaptive_reduction)
 
-        if not self._alarm and self._severe_run >= n_alarm:
+        if not self._alarm and self._severe_run >= n_alarm and self._cooldown <= 0:
             self._alarm = True
         elif self._alarm and self._calm_run >= self._n_clear:
             self._alarm = False
+            self._cooldown = self._cooldown_windows   # 进入冷却期
         return self._alarm
+
+    @property
+    def in_cooldown(self) -> bool:
+        """当前是否处于报警冷却期（供界面/日志展示）。"""
+        return self._cooldown > 0
 
     @property
     def smoothed_score(self) -> float:
@@ -257,8 +282,19 @@ class AlarmFSM:
         return self._alarm
 
 
+def evidence_channels(sub_scores: Dict[str, Optional[float]], cfg) -> int:
+    """有多少个模态**独立**给出了疲劳证据（子分 ≥ evidence_subscore_thresh）。
+
+    用于"多特征证据门"（见 evaluate）：老师建议——疲劳分要多个特征同时满足
+    才允许大幅上升，单一特征异常不足以判重度。
+    """
+    fusion_cfg = (cfg or {}).get("fusion", {})
+    th = float(fusion_cfg.get("evidence_subscore_thresh", 0.5))
+    return sum(1 for s in sub_scores.values() if s is not None and s >= th)
+
+
 def evaluate(wf, baseline, cfg, fsm: AlarmFSM) -> FatigueResult:
-    """便捷封装：子分 → 融合 → FSM → FatigueResult（GUI/记录直接用）。
+    """便捷封装：子分 → 融合 → 证据门 → FSM → FatigueResult（GUI/记录直接用）。
 
     按 fusion.update_interval_sec 节拍调用一次（不要按帧调用，见 AlarmFSM 注释）。
     """
@@ -268,31 +304,61 @@ def evaluate(wf, baseline, cfg, fsm: AlarmFSM) -> FatigueResult:
         "head": head_subscore(wf, baseline, cfg),
         "physio": physio_subscore(wf, baseline, cfg),
     }
-    weights = (cfg or {}).get("fusion", {}).get("weights", {})
+    fusion_cfg = (cfg or {}).get("fusion", {})
+    th_cfg = fusion_cfg.get("level_thresholds", {})
+    severe_th = float(th_cfg.get("severe", 0.70))
+    weights = fusion_cfg.get("weights", {})
     rels = reliabilities(wf, cfg)                        # 创新①：质量感知加权
     raw_score = fuse(sub, weights, rels)
+
+    # ---------------- 多特征证据门（老师建议，v1.10）----------------
+    # 只有 ≥ severe_min_channels 个模态各自给出证据时，融合分才允许进入"重度区"；
+    # 否则封顶在重度线之下（最高只到"中度"预警）。这防的是**单一特征的伪证据**：
+    # 低头看键盘会同时压低 EAR（下视遮眼）并触发低头，看似两个特征，实为同一动作
+    # 的产物——故眼部在低头时已被判为不可信（feature_window._eye_valid），此处证据
+    # 门再兜一层：真正的重度疲劳应当有多个**互相独立**的信号同时出现。
+    n_evidence = evidence_channels(sub, cfg)
+    min_ch = int(fusion_cfg.get("severe_min_channels", 2))
+    gated = False
+    if min_ch > 1 and n_evidence < min_ch and raw_score >= severe_th:
+        raw_score = severe_th - 0.01     # 封顶：最高只到"中度"
+        gated = True
+
     raw_level, _ = to_level(raw_score, cfg)
     # 创新③：证据一致度——有多少子分同时指向"中度以上"疲劳
-    moderate_th = float((cfg or {}).get("fusion", {}).get("level_thresholds", {}).get("moderate", 0.5))
+    moderate_th = float(th_cfg.get("moderate", 0.5))
     agreement = sum(1 for s in sub.values() if s is not None and s >= moderate_th)
     alarm = fsm.update(raw_level, raw_score, agreement)
     level = fsm.smoothed_level
     score = fsm.smoothed_score
+    if gated:                            # 平滑分同样不得越过重度线
+        score = min(score, severe_th - 0.01)
+        level, _ = to_level(score, cfg)
 
-    # 微睡眠硬规则：持续闭眼超过阈值 → 立即判重度并报警（反馈#1/#5）。
-    # 微睡眠是最危险状态，不等 EMA 平滑与"连续N窗"慢慢累积，直接越过 FSM。
-    micro = float((cfg or {}).get("fusion", {}).get("microsleep_sec", 2.0))
-    # 持续低头硬规则（第二轮反馈⑧）：头埋下去打瞌睡时眼部特征已不可测（低头深
-    # 时眼睑关键点锁到眉毛、EAR 失真），持续低头本身就是最后可用的疲劳证据——
-    # 超过阈值同样直接判重度并报警。阈值比微睡眠长得多：低头还可能是看手机/
-    # 看资料，短暂低头不该报。
-    head_down = float((cfg or {}).get("fusion", {}).get("head_down_sec", 8.0))
-    if (micro > 0 and getattr(wf, "current_closed_dur", 0.0) >= micro) or \
-       (head_down > 0 and getattr(wf, "current_lowered_dur", 0.0) >= head_down):
+    # ---------------- 硬规则（越过 EMA 与"连续N窗"，但都带护栏）----------------
+    # ① 微睡眠：持续闭眼超阈值 → 立即重度报警（反馈#1/#5）。
+    #    双重护栏（v1.10，老师实测 10 分钟误报 20 次的根因）：
+    #      (a) 眼部实时可靠度达标——低头/侧脸/丢脸时 EAR 失真，不认；
+    #      (b) 必须是**深度闭眼**（current_deep_closed_dur，见 feature_window.
+    #          _deep_closed_thresh）——"低头看键盘"下视会把 EAR 压到普通闭眼阈
+    #          附近(0.13~0.14)但远不到真闭眼水平(≈0.08)。(b) 不依赖姿态推断，
+    #          即使"开机时就低着头"导致俯仰零点被带偏也不会误报。
+    micro = float(fusion_cfg.get("microsleep_sec", 2.0))
+    min_eye_rel = float(fusion_cfg.get("microsleep_min_eye_reliability", 0.6))
+    eye_trustworthy = rels.get("eye", 1.0) >= min_eye_rel
+    micro_hit = (micro > 0 and eye_trustworthy
+                 and getattr(wf, "current_deep_closed_dur", 0.0) >= micro)
+    # ② 持续低头：头埋下去打瞌睡时眼部已不可测，持续低头是最后可用的疲劳证据。
+    #    护栏（v1.10）：阈值从 8s 提到 20s——低头看键盘/看资料/写字都是日常动作，
+    #    8 秒太短会误报；真打瞌睡的埋头会持续更久且不抬起。
+    head_down = float(fusion_cfg.get("head_down_sec", 20.0))
+    head_hit = (head_down > 0
+                and getattr(wf, "current_lowered_dur", 0.0) >= head_down)
+    if micro_hit or head_hit:
         level = LEVEL_SEVERE
         alarm = True
-        severe_th = float((cfg or {}).get("fusion", {}).get("level_thresholds", {}).get("severe", 0.70))
         score = max(score, severe_th)   # 分数也顶到重度线，界面显示一致
+        fsm.force_alarm()               # 同步 FSM 状态，避免下一窗立刻"解除"抖动
 
     return FatigueResult(
         score=score,

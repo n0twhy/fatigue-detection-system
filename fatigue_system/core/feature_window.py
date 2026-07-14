@@ -49,6 +49,7 @@ class FeatureAggregator:
         self._buf = deque()
         self._baseline: Optional[Baseline] = None
         self._pitch0 = 0.0            # 头姿俯仰零点（校准后为本人中性角）
+        self._neutral_est: Optional[float] = None   # 未校准时的自动零点估计（单调不上升）
 
     def _load_params(self, cfg) -> None:
         """从配置读入全部可调参数（__init__ 与 reconfigure 共用）。"""
@@ -67,6 +68,9 @@ class FeatureAggregator:
         self._blink_rate_min_win = float(eye.get("blink_rate_min_window_sec", 15))
         # 创新②：微睡眠判定阈（连续闭眼超此秒数记一次微睡眠）
         self._microsleep_dur = float(eye.get("microsleep_dur_sec", 0.5))
+        # 深度闭眼判据（v1.10 微睡眠硬规则专用，见 _deep_closed_thresh）
+        self._deep_closed_ratio = float(eye.get("deep_closed_ratio", 0.7))
+        self._deep_margin_ratio = float(eye.get("deep_closed_margin_ratio", 0.25))
         # 眼部特征失效俯仰角：低头超过此相对角度时眼睑关键点会锁到眉毛上
         # （组员实测），EAR 完全失真——这些帧不参与任何眼部统计。0 关闭该门控。
         self._eye_valid_pitch = float(eye.get("eye_valid_pitch_deg", 30))
@@ -84,6 +88,9 @@ class FeatureAggregator:
         self._yawn_win = float(mouth.get("yawn_window_sec", 60))
         # 头部
         self._pitch_lower = float(head.get("pitch_lower_thresh_deg", 15))
+        # 未校准时自动估计俯仰零点（缓冲内 25 分位数），见 _neutral_pitch
+        self._auto_neutral_pitch = bool(head.get("auto_neutral_pitch", True))
+        self._neutral_min_samples = int(head.get("auto_neutral_min_samples", 60))
         self._nod_win = float(head.get("nod_window_sec", 10))
         self._nod_amp = float(head.get("nod_amplitude_deg", 8))
         # 判为"点头"状态所需的最少点头次数：单次偏离(如哈欠头微动)不算点头（反馈#2）
@@ -105,6 +112,26 @@ class FeatureAggregator:
         self.set_baseline(self._baseline)
 
     # ------------------------------ 基线注入 ---------------------------------
+
+    def _deep_closed_thresh(self) -> float:
+        """"深度闭眼"阈值：比普通闭眼阈更严，用于微睡眠硬规则（v1.10）。
+
+        为什么需要它：普通闭眼阈会被"下视"骗到——低头看键盘时上眼睑覆盖眼球，
+        EAR 被压低到闭眼阈附近（实测 0.13~0.14 vs 阈值 0.15），但人是醒着的。
+        真正的闭眼 EAR 要低得多（CEW 数据实测闭眼中位 0.078）。姿态门控依赖
+        "俯仰零点"的估计，而用户若**开机时就低着头**，零点会被带偏、门控失效；
+        深度闭眼判据不依赖任何姿态推断，是独立的第二道保险。
+
+        有眨眼谷底锚点（校准得到本人真实闭眼水平）时按锚点定：
+            deep = 锚点 + deep_margin_ratio × (睁眼均值 − 锚点)
+        没有锚点时按闭眼阈打折：deep = deep_closed_ratio × 闭眼阈。
+        """
+        if self._baseline is not None and getattr(self._baseline, "valid", False):
+            anchor = getattr(self._baseline, "ear_blink_min", None)
+            mean = getattr(self._baseline, "ear_open_mean", 0.0)
+            if anchor is not None and mean > anchor:
+                return anchor + self._deep_margin_ratio * (mean - anchor)
+        return self._deep_closed_ratio * self._cur_thresh
 
     def set_baseline(self, baseline: Optional[Baseline]) -> None:
         """注入个性化基线，推导个性化闭眼阈值（两级方案）。
@@ -167,13 +194,47 @@ class FeatureAggregator:
         lo = now - sec
         return [f for f in self._buf if f[0] >= lo]
 
+    def _neutral_pitch(self) -> float:
+        """头姿俯仰零点：优先用校准基线；未校准时由缓冲内俯仰角**低分位数**自动兜底。
+
+        solvePnP+欧拉角分解在"正视"时 pitch 并不是 0（实测≈+14°，且随人脸/相机
+        几何而异）。若直接拿 0 当零点，低头判定与眼部失效门控会整体偏移——有人
+        会被判成"一直低头"，有人低头了也判不出来。
+
+        取 **25 分位数**而非中位数：低头只会让 pitch 变大，正常坐姿必然落在分布
+        低端。中位数在"低头时间接近一半"时会被抬高（实测：启动 12s、缓冲里 6s 正常
+        +6s 低头，中位数正好卡在两者之间，导致低头帧被误判为眼部可信而误报微睡眠）；
+        25 分位数在低头占比达 ~40% 前都稳定指向正常坐姿。
+
+        再加一条**单调不上升**约束（只取历史最低的估计）：直立是俯仰角的下界，
+        "长时间保持低头"绝不能把零点带上去。否则真趴睡的人趴够一会儿后，缓冲里
+        全是低头帧、零点漂到低头姿态 → 系统反而认为他"坐得很正"，低头判定与眼部
+        失效门控同时失效（实测：埋头 12s 后 PERCLOS 从 0 变成 0.79、
+        current_lowered_dur 归零）。零点只允许向"更直立"的方向修正。
+        """
+        if self._baseline is not None and getattr(self._baseline, "valid", False):
+            return float(getattr(self._baseline, "pitch", 0.0))
+        if not self._auto_neutral_pitch:
+            return 0.0
+        face = [f[4] for f in self._buf if f[1]]
+        if len(face) < self._neutral_min_samples:   # 样本太少，先不猜零点
+            return self._neutral_est if self._neutral_est is not None else 0.0
+        p25 = float(np.percentile(face, 25))
+        if self._neutral_est is None:
+            self._neutral_est = p25
+        else:
+            self._neutral_est = min(self._neutral_est, p25)   # 单调不上升
+        return self._neutral_est
+
     def _eye_valid(self, frame) -> bool:
         """该帧的眼部特征是否可信：检出人脸且低头未超过失效俯仰角。
 
-        低头过深时 MediaPipe 眼睑关键点会锁到眉毛上（组员实测），EAR 数值
-        完全失真——可能被误读成"睁眼"。失真帧既不算闭眼也不算睁眼，直接
-        排除在 PERCLOS/眨眼等所有眼部统计之外（此时段的疲劳证据由头部通道
-        与"持续低头硬规则"接管）。
+        低头时眼部 EAR **不可信**，有两个叠加原因：
+          * 下视时上眼睑自然覆盖大半眼球，EAR 被压低——这是**注视方向的产物，
+            不是困倦闭眼**（老师实测：坐在电脑前低头看键盘被连报重度疲劳）；
+          * 低头过深时 MediaPipe 眼睑关键点甚至锁到眉毛上（组员实测），数值完全失真。
+        失真帧既不算闭眼也不算睁眼，直接排除在 PERCLOS/眨眼/微睡眠等所有眼部
+        统计之外（此时段的疲劳证据由头部通道与"持续低头硬规则"接管）。
         """
         if not frame[1]:
             return False
@@ -195,10 +256,13 @@ class FeatureAggregator:
 
         # 生效阈值：校准后为个性化统计阈，否则为绝对回退阈值
         self._cur_thresh = self._ear_closed_thresh
+        # 俯仰零点：本轮聚合统一使用（校准基线优先，否则缓冲中位数自动兜底）
+        self._pitch0 = self._neutral_pitch()
         wf.perclos = self._compute_perclos()
         wf.blink_count, wf.blink_rate = self._compute_blinks()
         wf.eye_closed_dur = self._compute_longest_closed()
         wf.current_closed_dur = self._compute_current_closed()
+        wf.current_deep_closed_dur = self._compute_current_closed(deep=True)
         wf.avg_blink_dur, wf.microsleep_count = self._compute_blink_dynamics()
         wf.face_ratio, wf.mean_abs_yaw, wf.mean_abs_pitch = self._compute_signal_quality()
         wf.current_lowered_dur = self._compute_current_lowered()
@@ -277,21 +341,29 @@ class FeatureAggregator:
             longest = max(longest, w[-1][0] - run_start)
         return longest
 
-    def _compute_current_closed(self) -> float:
+    def _compute_current_closed(self, deep: bool = False) -> float:
         """当前正在进行的连续闭眼时长（秒）；最新帧未闭眼则为 0。
 
         反映"此刻已经连续闭了多久"，无历史老化、不受统计窗口长度限制（仅受缓冲
         长度限制），比窗口内"最长闭眼"即时得多——供微睡眠直接报警用（反馈#1/#5）。
+
+        deep=True 时用**深度闭眼阈**（见 _deep_closed_thresh）：微睡眠硬规则专用，
+        排除"低头下视把 EAR 压低"造成的假闭眼（v1.10 老师实测误报的根因之一）。
         """
         if not self._buf:
             return 0.0
+        thresh = self._deep_closed_thresh() if deep else self._cur_thresh
+
+        def _closed(f):
+            return self._eye_valid(f) and f[2] < thresh
+
         last = self._buf[-1]
-        if not self._is_closed(last):
+        if not _closed(last):
             return 0.0
         now = last[0]
         start = now
         for frame in reversed(self._buf):     # 从末尾往前扩展连续闭眼段
-            if self._is_closed(frame):
+            if _closed(frame):
                 start = frame[0]
             else:
                 break

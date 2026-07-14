@@ -85,6 +85,9 @@ class WindowFeatures:
     blink_count: int = 0
     eye_closed_dur: float = 0.0
     current_closed_dur: float = 0.0
+    current_deep_closed_dur: float = 0.0   # 当前连续"深度闭眼"时长（秒）：EAR 低于
+                                    # 更严的深度阈（见 feature_window._deep_closed_thresh），
+                                    # 供微睡眠硬规则用——排除"低头下视压低 EAR"的假闭眼
     avg_blink_dur: float = 0.0      # 创新②：窗口内平均眨眼时长（秒），微睡眠判别指标
     microsleep_count: int = 0       # 创新②：窗口内微睡眠次数（连续闭眼 >0.5s）
     yawn_count: int = 0

@@ -1,38 +1,83 @@
 # -*- coding: utf-8 -*-
-"""界面主题：深色现代仪表盘风格（geek / 赛博终端观感）。
+"""界面主题：苹果风浅色极简（EXPWORK/DESIGN.md 是唯一事实来源）。
 
 统一色板 + 一份全局 QSS，供 app 应用到整个 QApplication；各面板只引用这里
-的颜色常量，不再各写各的内联浅色样式，保证整体风格一致。
+的颜色/间距/动画常量，控件代码中禁止写死任何色值或时长（DESIGN.md §0.3/§9）。
 
-设计取向：近黑蓝底 + 霓虹青(teal/cyan)点缀 + 等宽字体读数；数据用 Consolas
-等宽显示更有"仪表盘"感，中文自动回退到界面 CJK 字体正常渲染。
+设计纪律（DESIGN.md §1）：做减法；层级靠字号字重不靠颜色；彩色只用于
+"可交互/选中"（强调蓝）与"疲劳等级/报警"（状态色）；留白慷慨；
+一个界面永远只有一个实心彩色按钮。
 """
 
-# ------------------------------- 色板 ---------------------------------------
-BG = "#0d1117"          # 主背景（近黑、微蓝）
-SURFACE = "#161b22"     # 卡片/面板
-SURFACE_2 = "#1c2128"   # 更深一层（输入框/表格行）
-BORDER = "#30363d"      # 细边框
-BORDER_HL = "#3d444d"   # 高亮边框
-TEXT = "#e6edf3"        # 主文字
-TEXT_DIM = "#8b949e"    # 次要文字
-TEXT_MUTE = "#6e7681"   # 更弱文字
-ACCENT = "#2dd4bf"      # 主点缀：霓虹青
-ACCENT_2 = "#22d3ee"    # 次点缀：青蓝
-ACCENT_DEEP = "#0f2e2a" # 点缀的深色底（悬停填充）
+# ------------------------------- 基础色（§2.1）-------------------------------
+BG = "#F5F5F7"          # 窗口底色
+SURFACE = "#FFFFFF"     # 卡片底色
+SURFACE_2 = "#F5F5F7"   # 卡片内的浅灰层（磁贴/输入底、悬停底）
+BORDER = "#E5E5EA"      # 卡片边框（1px）
+BORDER_HL = "#D2D2D7"   # 按钮/输入控件描边
+SEPARATOR = "#F0F0F2"   # 列表行分隔线
+TEXT = "#1D1D1F"        # 主文字
+TEXT_DIM = "#6E6E73"    # 次级文字
+TEXT_MUTE = "#AEAEB2"   # 弱化文字（坐标轴、状态栏、占位）
+TRACK = "#EBEBED"       # 进度条轨道 / 开关关闭态
 
-# 四级疲劳配色（深色主题下鲜明但不刺眼），索引与 fusion 等级 0..3 对应
-LEVEL_COLORS = ("#3fb950", "#d29922", "#f0883e", "#f85149")
+# ------------------------------ 强调色（§2.2，全局唯一）----------------------
+ACCENT = "#0071E3"      # 强调蓝：曲线、主按钮、选中
+ACCENT_2 = "#0071E3"    # 兼容旧引用：不允许第二强调色，与 ACCENT 同值
+SELECT_BG = "#E6F1FB"   # 选中行背景
+SELECT_FG = "#185FA5"   # 选中行文字
+ACCENT_DEEP = SELECT_BG  # 兼容旧引用（旧深色主题的"点缀深底"→ 选中浅蓝底）
+CHART_FILL_ALPHA = 0.08  # 曲线下方填充不透明度（同强调蓝）
 
-# 等宽字体（读数/表格用）；中文由后面的 CJK 字体回退渲染
-MONO = '"Cascadia Mono", "Consolas", "JetBrains Mono", "DejaVu Sans Mono", monospace'
+# ---------------------- 状态色（§2.3，仅限等级/报警，禁止挪用）----------------
+GREEN = "#34C759"        # 正常/报警解除（圆点、开关开启态）
+GREEN_TEXT = "#248A3D"   # 绿色状态配套文字
+ORANGE = "#EF9F27"       # 中度加深橙 / 分量进度条超阈值填充
+RED = "#E24B4A"          # 重度/停止按钮/报警中（白字）
+# 等级 badge（底色, 文字），索引与 fusion 等级 0..3 对应
+LEVEL_BADGES = (
+    ("#EAF7EE", GREEN_TEXT),    # 清醒
+    ("#FAEEDA", "#854F0B"),     # 轻度疲劳
+    ("#FAEEDA", "#BA7517"),     # 中度疲劳
+    ("#FBE9E9", RED),           # 重度疲劳
+)
+# 兼容旧引用：单色版（文字/描边用，取 badge 文字色系）
+LEVEL_COLORS = (GREEN_TEXT, "#854F0B", ORANGE, RED)
+
+# ------------------------------ 视频区特例（§2.4）----------------------------
+VIDEO_BG = "#1A1A1C"                    # 视频容器固定深色，不随浅色主题变白
+PILL_BG = "rgba(40,40,44,0.8)"          # 视频浮层胶囊底
+PILL_FG = "#C8C8CC"                     # 视频浮层胶囊文字
+PILL_OK_BG = "rgba(30,60,40,0.75)"      # 人脸正常胶囊底
+PILL_OK_FG = "#D0F5DD"                  # 人脸正常胶囊文字
+
+# ------------------------------ 字体（§3）-----------------------------------
+FONT_STACK = ('"SF Pro Display", "SF Pro Text", "PingFang SC", "Segoe UI", '
+              '"Microsoft YaHei UI", "Microsoft YaHei", sans-serif')
+MONO = '"SF Mono", "Consolas", "Cascadia Mono", "DejaVu Sans Mono", monospace'
+
+# --------------------------- 间距/圆角/边框（§4）-----------------------------
+GAP = 12            # 卡片之间统一间距
+PAD_CARD = 20       # 卡片内边距（样图尺度，§4 允许 16-20）
+RADIUS_CARD = 12    # 卡片圆角
+RADIUS_PANEL = 14   # 面板/弹窗圆角
+RADIUS_CTRL = 8     # 按钮与输入控件圆角
+SHADOW_POPUP = "0 8px 24px rgba(0,0,0,0.12)"   # 唯一允许的阴影（弹出面板）
+
+# ------------------------------ 动画（§7.0）---------------------------------
+ANIM_FAST = 150     # ms，悬停、退场
+ANIM_BASE = 220     # ms，常规状态切换
+ANIM_SLOW = 300     # ms，上限，任何动画不得超过
+# 缓动曲线统一：进场/状态变化 QEasingCurve.OutCubic，退场 InCubic（§7.0，
+# 在动画代码处 import QEasingCurve 使用；禁止 Linear/OutBounce/OutBack）
 
 
 def _qss() -> str:
     return f"""
 * {{
     color: {TEXT};
-    font-size: 13px;
+    font-size: 14px;
+    font-family: {FONT_STACK};
 }}
 QWidget {{
     background-color: {BG};
@@ -45,49 +90,63 @@ QLabel {{
     color: {TEXT};
 }}
 
-/* ---- 按钮 ---- */
+/* ---- 按钮（默认：白底描边；悬停浅灰；见 §6）---- */
 QPushButton {{
-    background-color: {SURFACE_2};
+    background-color: {SURFACE};
     color: {TEXT};
-    border: 1px solid {BORDER};
-    border-radius: 7px;
-    padding: 7px 14px;
+    border: 1px solid {BORDER_HL};
+    border-radius: {RADIUS_CTRL}px;
+    padding: 6px 14px;
 }}
 QPushButton:hover {{
-    border-color: {ACCENT};
-    color: {ACCENT};
+    background-color: {SURFACE_2};
 }}
 QPushButton:pressed {{
-    background-color: {ACCENT_DEEP};
+    background-color: {TRACK};
 }}
 QPushButton:disabled {{
     color: {TEXT_MUTE};
     border-color: {BORDER};
     background-color: {SURFACE};
 }}
-/* 主行动按钮（校准/记录）：青色描边更醒目 */
+/* 旧 accent 按钮（校准/记录）：描边样式，不实心——实心只留给唯一主按钮 */
 QPushButton[accent="true"] {{
-    border-color: {ACCENT};
-    color: {ACCENT};
-    font-weight: bold;
+    border-color: {BORDER_HL};
+    color: {TEXT};
 }}
 QPushButton[accent="true"]:hover {{
-    background-color: {ACCENT_DEEP};
+    background-color: {SURFACE_2};
 }}
 QPushButton[accent="true"]:checked {{
+    background-color: {SELECT_BG};
+    border-color: {SELECT_BG};
+    color: {SELECT_FG};
+}}
+/* 唯一实心主按钮（§5.1）：运行状态切换蓝/红由代码设 danger 属性 */
+QPushButton[primary="true"] {{
     background-color: {ACCENT};
-    color: {BG};
-    font-weight: bold;
+    border: none;
+    color: #FFFFFF;
+    font-weight: 500;
+    font-size: 17px;
+    padding: 12px 28px;
+}}
+QPushButton[primary="true"]:hover {{
+    background-color: #0077ED;
+}}
+QPushButton[primary="true"][danger="true"] {{
+    background-color: {RED};
 }}
 
 /* ---- 下拉框 ---- */
 QComboBox {{
-    background-color: {SURFACE_2};
-    border: 1px solid {BORDER};
-    border-radius: 7px;
-    padding: 6px 10px;
+    background-color: {SURFACE};
+    border: 1px solid {BORDER_HL};
+    border-radius: {RADIUS_CTRL}px;
+    padding: 10px 16px;
+    font-size: 16px;
 }}
-QComboBox:hover {{ border-color: {BORDER_HL}; }}
+QComboBox:hover {{ background-color: {SURFACE_2}; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox::down-arrow {{
     image: none;
@@ -97,76 +156,83 @@ QComboBox::down-arrow {{
     margin-right: 6px;
 }}
 QComboBox QAbstractItemView {{
-    background-color: {SURFACE_2};
+    background-color: {SURFACE};
     border: 1px solid {BORDER};
-    selection-background-color: {ACCENT_DEEP};
-    selection-color: {ACCENT};
+    selection-background-color: {SELECT_BG};
+    selection-color: {SELECT_FG};
     outline: none;
 }}
 
-/* ---- 复选框 ---- */
+/* ---- 复选框（过渡样式；§6 最终形态为 Switch，阶段7替换）---- */
 QCheckBox {{ spacing: 7px; background: transparent; }}
 QCheckBox::indicator {{
     width: 16px; height: 16px;
     border: 1px solid {BORDER_HL};
     border-radius: 4px;
-    background-color: {SURFACE_2};
+    background-color: {SURFACE};
 }}
 QCheckBox::indicator:checked {{
-    background-color: {ACCENT};
-    border-color: {ACCENT};
+    background-color: {GREEN};
+    border-color: {GREEN};
+}}
+
+/* ---- 数字输入 ---- */
+QSpinBox, QDoubleSpinBox {{
+    background-color: {SURFACE};
+    border: 1px solid {BORDER_HL};
+    border-radius: {RADIUS_CTRL}px;
+    padding: 4px 8px;
 }}
 
 /* ---- 分组卡片 ---- */
 QGroupBox {{
     background-color: {SURFACE};
     border: 1px solid {BORDER};
-    border-radius: 10px;
+    border-radius: {RADIUS_CARD}px;
     margin-top: 14px;
     padding: 10px;
-    font-weight: bold;
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
     left: 12px;
     padding: 0 6px;
-    color: {ACCENT};
+    color: {TEXT_DIM};
+    font-size: 12px;
 }}
 
 /* ---- 表格 ---- */
 QTableWidget {{
     background-color: {SURFACE};
-    alternate-background-color: {SURFACE_2};
-    gridline-color: {BORDER};
+    alternate-background-color: {SURFACE};
+    gridline-color: {SEPARATOR};
     border: 1px solid {BORDER};
-    border-radius: 8px;
-    font-family: {MONO};
-    font-size: 12px;
+    border-radius: {RADIUS_CTRL}px;
+    font-size: 13px;
 }}
 QHeaderView::section {{
-    background-color: {SURFACE_2};
+    background-color: {SURFACE};
     color: {TEXT_DIM};
     border: none;
     border-bottom: 1px solid {BORDER};
     padding: 6px;
-    font-weight: bold;
+    font-size: 12px;
 }}
 QTableWidget::item {{ padding: 3px; }}
 QTableWidget::item:selected {{
-    background-color: {ACCENT_DEEP};
-    color: {ACCENT};
+    background-color: {SELECT_BG};
+    color: {SELECT_FG};
 }}
-QTableCornerButton::section {{ background-color: {SURFACE_2}; border: none; }}
+QTableCornerButton::section {{ background-color: {SURFACE}; border: none; }}
 
-/* ---- 滚动条（细长现代款）---- */
+/* ---- 滚动条（细长，浅色）---- */
 QScrollBar:vertical {{
     background: transparent; width: 10px; margin: 2px;
 }}
 QScrollBar::handle:vertical {{
     background: {BORDER_HL}; border-radius: 5px; min-height: 24px;
 }}
-QScrollBar::handle:vertical:hover {{ background: {ACCENT}; }}
+QScrollBar::handle:vertical:hover {{ background: {TEXT_MUTE}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
 QScrollBar:horizontal {{
     background: transparent; height: 10px; margin: 2px;
@@ -174,34 +240,54 @@ QScrollBar:horizontal {{
 QScrollBar::handle:horizontal {{
     background: {BORDER_HL}; border-radius: 5px; min-width: 24px;
 }}
-QScrollBar::handle:horizontal:hover {{ background: {ACCENT}; }}
+QScrollBar::handle:horizontal:hover {{ background: {TEXT_MUTE}; }}
 
 /* ---- 弹窗 ---- */
 QMessageBox {{ background-color: {SURFACE}; }}
 
-/* ---- 顶部应用头栏 ---- */
+/* ---- 顶部工具栏（§5.1）---- */
 QFrame#header {{
     background-color: {SURFACE};
     border: 1px solid {BORDER};
-    border-radius: 12px;
+    border-radius: {RADIUS_CARD}px;
+}}
+QLabel#appTitle {{
+    font-size: 20px;
+    font-weight: 500;
+    color: {TEXT};
+    background: transparent;
+}}
+QLabel#statusDot {{
+    font-size: 16px;
+    color: {TEXT_DIM};
+    background: transparent;
+}}
+/* 图标按钮：无底色（§5.1/§6）；悬停底色由 IconButton 手绘 150ms 动画（§7.1） */
+QPushButton[iconbtn="true"] {{
+    background: transparent;
+    border: none;
+    border-radius: {RADIUS_CTRL}px;
+    padding: 0;
+}}
+QPushButton[iconbtn="true"]:checked {{
+    background-color: {SELECT_BG};
 }}
 QLabel#logoMark {{
-    background-color: {ACCENT};
-    color: {BG};
-    border-radius: 8px;
-    font-weight: bold;
-    font-size: 18px;
+    background-color: {SURFACE_2};
+    color: {TEXT_DIM};
+    border-radius: {RADIUS_CTRL}px;
+    font-weight: 500;
+    font-size: 16px;
     qproperty-alignment: AlignCenter;
 }}
-QLabel#headerTitle {{ font-size: 17px; font-weight: bold; color: {TEXT}; }}
-QLabel#headerSub {{ font-size: 10px; color: {TEXT_MUTE}; letter-spacing: 2px; }}
+QLabel#headerTitle {{ font-size: 14px; font-weight: 500; color: {TEXT}; }}
+QLabel#headerSub {{ font-size: 11px; color: {TEXT_MUTE}; }}
 QLabel#pill {{
-    background-color: {SURFACE_2};
+    background-color: {SURFACE};
     border: 1px solid {BORDER};
     border-radius: 12px;
-    padding: 5px 12px;
+    padding: 4px 12px;
     color: {TEXT_DIM};
-    font-family: {MONO};
     font-size: 12px;
 }}
 
@@ -209,53 +295,72 @@ QLabel#pill {{
 QFrame#card {{
     background-color: {SURFACE};
     border: 1px solid {BORDER};
-    border-radius: 12px;
+    border-radius: {RADIUS_CARD}px;
 }}
 QFrame#statTile {{
     background-color: {SURFACE_2};
-    border: 1px solid {BORDER};
-    border-radius: 10px;
+    border: none;
+    border-radius: {RADIUS_CTRL}px;
 }}
 QLabel#statLabel {{
-    color: {TEXT_MUTE};
-    font-size: 10px;
-    font-weight: bold;
+    color: {TEXT_DIM};
+    font-size: 12px;
 }}
 QLabel#sectionTitle {{
     color: {TEXT_DIM};
-    font-size: 11px;
-    font-weight: bold;
-    letter-spacing: 1px;
+    font-size: 13px;
 }}
 QLabel#baseline {{
-    color: {TEXT_DIM};
+    color: {TEXT_MUTE};
     font-size: 12px;
-    font-family: {MONO};
-    background-color: {SURFACE_2};
-    border: 1px solid {BORDER};
-    border-radius: 8px;
-    padding: 7px 10px;
+    background: transparent;
+    border: none;
+    padding: 4px 2px;
 }}
-QLabel#heroLevel {{ font-size: 30px; font-weight: bold; }}
+QLabel#heroLevel {{ font-size: 30px; font-weight: 500; }}
 
-/* ---- 指标选择器 chip（曲线图上方的分段选择）---- */
+/* ---- 疲劳等级卡片（§5.3）---- */
+QLabel#bigScore {{
+    font-size: 38px;
+    font-weight: 500;
+    color: {TEXT};
+    font-family: {MONO};
+}}
+QLabel#kssLabel {{
+    font-size: 13px;
+    color: {TEXT_MUTE};
+}}
+QLabel#subLabel {{
+    font-size: 13px;
+    color: {TEXT_DIM};
+}}
+QLabel#subValue {{
+    font-size: 13px;
+    color: {TEXT};
+    font-family: {MONO};
+}}
+/* 报警状态行（§5.3）：单行文字表达，不再用整幅色块 */
+QLabel#alarmText {{ font-size: 14px; }}
+QLabel#alarmCount {{ font-size: 13px; color: {TEXT_MUTE}; }}
+
+/* ---- 指标选择器 chip（阶段4将改为列表行，此处先给浅色过渡样式）---- */
 QPushButton[chip="true"] {{
-    background-color: {SURFACE_2};
-    border: 1px solid {BORDER};
+    background-color: {SURFACE};
+    border: 1px solid {BORDER_HL};
     border-radius: 13px;
     padding: 4px 13px;
     font-size: 12px;
     color: {TEXT_DIM};
 }}
 QPushButton[chip="true"]:hover {{
-    border-color: {ACCENT};
+    background-color: {SURFACE_2};
     color: {TEXT};
 }}
 QPushButton[chip="true"]:checked {{
-    background-color: {ACCENT};
-    border-color: {ACCENT};
-    color: {BG};
-    font-weight: bold;
+    background-color: {SELECT_BG};
+    border-color: {SELECT_BG};
+    color: {SELECT_FG};
+    font-weight: 500;
 }}
 """
 
