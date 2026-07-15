@@ -51,20 +51,25 @@ _HEAD_STATE_COLOR = {
 
 
 class Metric:
-    """一个可展示的指标：列表行 + （可选）曲线的全部元数据。
+    """一个可展示的指标：列表行 + 曲线的全部元数据。
 
     字段:
         key/name   —— 键与中文名。
-        common     —— 是否属于"常用"页（第 1 页）。
-        chartable  —— 是否可画曲线（可点击切换）。
-        yrange     —— 固定 y 范围；None 表示按数据自适应。
+        common     —— 是否属于第 1 页（核心指标）。
+        chartable  —— 是否可画曲线（列表里**每一行都可点**，见 METRICS 注释）。
+        yrange     —— 固定 y 范围；**None = 自适应量程**（见 min_span/bounds）。
         fn         —— 从 (ff, wf, result) 取曲线值。
-        fmt        —— 大数字/列表值的格式（如 "{:.3f}"、"{:.0%}"）。
-        smooth_sec —— 绘图平滑窗口（秒）。0 = 不平滑（逐帧量，如 EAR/MAR）；
-                      慢指标（每秒更新一次）取 1.5s，抹掉"台阶"。
+        fmt        —— 大数字/列表值的格式。
+        smooth_sec —— 绘图平滑窗口（秒）。0 = 不平滑（逐帧量，如 EAR/MAR，要保留
+                      眨眼尖峰）；每秒才更新一次的量必须平滑，否则每帧重复写同一个
+                      值 → 画出来就是台阶。
+        min_span   —— 自适应量程的**最小跨度**：值稳定时若让量程紧贴数据，微小噪声
+                      会被放大成剧烈波动；给个下限，曲线才"稳得住"。
+        bounds     —— 该量的物理上下界（如 PERCLOS ∈ [0,1]），自适应量程不越界。
     """
 
-    def __init__(self, key, name, common, chartable, yrange, fn, fmt, smooth_sec=0.0):
+    def __init__(self, key, name, common, chartable, yrange, fn, fmt,
+                 smooth_sec=0.0, min_span=None, bounds=None):
         self.key = key
         self.name = name
         self.common = common
@@ -73,51 +78,78 @@ class Metric:
         self.fn = fn
         self.fmt = fmt
         self.smooth_sec = smooth_sec
+        self.min_span = min_span
+        self.bounds = bounds
 
 
-_SLOW = 1.5     # 慢指标（1Hz 更新）的绘图平滑窗口（秒）
+# 绘图平滑窗口：更新节拍是 1 秒，窗口要明显大于它才能把台阶抹成斜坡；
+# 计数类（微睡眠/哈欠/点头）是整数、一次跳一整格，需要更长的窗口。
+_SLOW = 2.5
+_COUNT = 4.0
 
+# 指标顺序与分页（用户拍板 · 方案A）：
+#   * 第 1 页「核心指标」= 看**结论与判据**：融合分（最终结论）固定第一，紧跟它的
+#     国际刻度 KSS；再按 眼 → 嘴 → 生理 的因果链排。
+#   * 第 2 页「更多指标」= 看**原始信号**：EAR/MAR/角度等，调参或排查时才翻。
+#   * **每一行都可点、都有曲线**：原来的"头部状态""疲劳等级"没有曲线却夹在能点的
+#     行中间（点了没反应，手感很怪），且这两条信息在界面上已各出现过一次——头部
+#     状态见视频左下角胶囊"姿态 …"，疲劳等级见右上等级卡的胶囊——按 §1.1「同一
+#     信息只出现一次」删除，不在此重复。
 METRICS: List[Metric] = [
+    # ---- 第 1 页：核心指标 ----
     Metric("score", "融合分", True, True, (0.0, 1.0),
            lambda ff, wf, r: _num(r.score) if r else _NAN, "{:.3f}", _SLOW),
-    Metric("ear", "EAR 眼纵横比", True, True, (0.0, 0.45),
-           lambda ff, wf, r: _num(ff.ear) if ff and ff.face_found else _NAN, "{:.3f}", 0.0),
-    Metric("perclos", "PERCLOS", True, True, (0.0, 1.0),
-           lambda ff, wf, r: _num(wf.perclos) if wf else _NAN, "{:.0%}", _SLOW),
-    Metric("blink", "眨眼率", True, True, None,
-           lambda ff, wf, r: _num(wf.blink_rate) if wf else _NAN, "{:.0f}/分", _SLOW),
-    Metric("closed", "最长闭眼", True, True, None,
-           lambda ff, wf, r: _num(wf.eye_closed_dur) if wf else _NAN, "{:.1f} s", _SLOW),
-    Metric("microsleep", "微睡眠", True, True, None,
-           lambda ff, wf, r: _num(wf.microsleep_count) if wf else _NAN, "{:.0f}", _SLOW),
-    Metric("hr", "心率 HR", True, True, None,
-           lambda ff, wf, r: _num(wf.hr) if wf and wf.hr is not None else _NAN, "{:.0f}", _SLOW),
     Metric("kss", "KSS 嗜睡度", True, True, (1.0, 9.0),
            lambda ff, wf, r: _num(r.kss) if r else _NAN, "{:.0f}/9", _SLOW),
-    # ---- 第 2 页（更多指标）----
+    Metric("perclos", "PERCLOS", True, True, None,       # 自适应：正常时只有百分之几，
+           lambda ff, wf, r: _num(wf.perclos) if wf else _NAN, "{:.0%}", _SLOW,
+           min_span=0.10, bounds=(0.0, 1.0)),            # 固定 0~100% 会一直贴着底
+    Metric("closed", "最长闭眼", True, True, None,
+           lambda ff, wf, r: _num(wf.eye_closed_dur) if wf else _NAN, "{:.1f} s", _SLOW,
+           min_span=1.0, bounds=(0.0, None)),
+    Metric("microsleep", "微睡眠", True, True, None,
+           lambda ff, wf, r: _num(wf.microsleep_count) if wf else _NAN, "{:.0f}", _COUNT,
+           min_span=3.0, bounds=(0.0, None)),
+    Metric("blink", "眨眼率", True, True, None,
+           lambda ff, wf, r: _num(wf.blink_rate) if wf else _NAN, "{:.0f}/分", _SLOW,
+           min_span=10.0, bounds=(0.0, None)),
+    Metric("yawn", "哈欠数", True, True, None,
+           lambda ff, wf, r: _num(wf.yawn_count) if wf else _NAN, "{:.0f}", _COUNT,
+           min_span=3.0, bounds=(0.0, None)),
+    Metric("hr", "心率 HR", True, True, None,
+           lambda ff, wf, r: _num(wf.hr) if wf and wf.hr is not None else _NAN, "{:.0f}",
+           _SLOW, min_span=10.0, bounds=(30.0, 200.0)),
+    # ---- 第 2 页：更多指标（原始信号）----
+    Metric("ear", "EAR 眼纵横比", False, True, (0.0, 0.45),
+           lambda ff, wf, r: _num(ff.ear) if ff and ff.face_found else _NAN, "{:.3f}", 0.0),
     Metric("mar", "MAR 嘴纵横比", False, True, (0.0, 0.6),
            lambda ff, wf, r: _num(ff.mar) if ff and ff.face_found else _NAN, "{:.3f}", 0.0),
     Metric("avg_blink", "平均眨眼时长", False, True, None,
-           lambda ff, wf, r: _num(wf.avg_blink_dur) if wf else _NAN, "{:.2f} s", _SLOW),
-    Metric("yawn", "哈欠数", False, True, None,
-           lambda ff, wf, r: _num(wf.yawn_count) if wf else _NAN, "{:.0f}", _SLOW),
+           lambda ff, wf, r: _num(wf.avg_blink_dur) if wf else _NAN, "{:.2f} s", _SLOW,
+           min_span=0.4, bounds=(0.0, None)),
     Metric("nod", "点头数", False, True, None,
-           lambda ff, wf, r: _num(wf.nod_count) if wf else _NAN, "{:.0f}", _SLOW),
-    Metric("hrv", "HRV", False, True, None,
-           lambda ff, wf, r: _num(wf.hrv) if wf and wf.hrv is not None else _NAN, "{:.0f}", _SLOW),
-    Metric("quality", "信号质量", False, True, (0.0, 1.0),
-           lambda ff, wf, r: _num(wf.face_ratio) if wf else _NAN, "{:.0%}", _SLOW),
+           lambda ff, wf, r: _num(wf.nod_count) if wf else _NAN, "{:.0f}", _COUNT,
+           min_span=3.0, bounds=(0.0, None)),
     Metric("pitch", "俯仰角", False, True, None,
-           lambda ff, wf, r: _num(ff.pitch) if ff and ff.face_found else _NAN, "{:+.0f}°", _SLOW),
-    Metric("head_state", "头部状态", False, False, None, None, "", 0.0),
-    Metric("level", "疲劳等级", False, False, None, None, "", 0.0),
+           lambda ff, wf, r: _num(ff.pitch) if ff and ff.face_found else _NAN, "{:+.0f}°",
+           _SLOW, min_span=20.0),
+    Metric("hrv", "HRV", False, True, None,
+           lambda ff, wf, r: _num(wf.hrv) if wf and wf.hrv is not None else _NAN, "{:.0f}",
+           _SLOW, min_span=20.0, bounds=(0.0, None)),
+    Metric("quality", "信号质量", False, True, None,
+           lambda ff, wf, r: _num(wf.face_ratio) if wf else _NAN, "{:.0%}", _SLOW,
+           min_span=0.2, bounds=(0.0, 1.0)),
 ]
 
 _BY_KEY: Dict[str, Metric] = {m.key: m for m in METRICS}
 
 
 def _row_values(ff, wf, result, head_state) -> Dict[str, Tuple[str, str]]:
-    """列表每行的 (显示文本, 颜色)。"""
+    """列表每行的 (显示文本, 颜色)。
+
+    head_state 仍在签名里（主窗口按帧传入），但不再单独成行——头部状态已显示在
+    视频左下角胶囊（§1.1 同一信息只出现一次）。
+    """
     out: Dict[str, Tuple[str, str]] = {}
     dim = theme.TEXT_MUTE
     normal = theme.TEXT_DIM
@@ -130,8 +162,6 @@ def _row_values(ff, wf, result, head_state) -> Dict[str, Tuple[str, str]]:
     put("ear", ff.ear if face else None)
     put("mar", ff.mar if face else None)
     put("pitch", ff.pitch if face else None)
-    out["head_state"] = ((_HEAD_STATE_CN.get(head_state, "—"),
-                          _HEAD_STATE_COLOR.get(head_state, dim)) if face else ("—", dim))
     if wf is not None:
         put("perclos", wf.perclos)
         put("blink", wf.blink_rate)
@@ -149,8 +179,7 @@ def _row_values(ff, wf, result, head_state) -> Dict[str, Tuple[str, str]]:
     if result is not None:
         color = theme.LEVEL_COLORS[int(result.level) % len(theme.LEVEL_COLORS)]
         put("score", result.score)
-        put("kss", result.kss, color)
-        out["level"] = (result.level_name, color)
+        put("kss", result.kss, color)     # KSS 用等级色，一眼看出严重程度
     return out
 
 
@@ -170,6 +199,12 @@ class TimeSeriesChart(QWidget):
         self._grid: List[float] = [_NAN] * _GRID_N
         self._yrange: Tuple[float, float] = (0.0, 1.0)
         self._thresholds: Optional[List[Tuple[float, str]]] = None
+        self._x_frac = 0.0     # 曲线整体左移的子格偏移（见 _resample 的"固定时间格"）
+        # y 量程的迟滞状态：_range_key 记录当前是哪个指标的量程
+        self._range_key: Optional[str] = None
+        self._range: Optional[Tuple[float, float]] = None       # 当前生效量程
+        self._range_from: Optional[Tuple[float, float]] = None  # 量程切换动画起点
+        self._range_p = 1.0
         # 变形动画的起止快照
         self._from_grid: Optional[List[float]] = None
         self._from_yrange: Optional[Tuple[float, float]] = None
@@ -181,7 +216,7 @@ class TimeSeriesChart(QWidget):
     def set_series(self, points, metric: Metric,
                    thresholds=None, transition: bool = False) -> None:
         """更新曲线。transition=True（用户切换指标）时做 220ms 逐点插值变形。"""
-        grid, yrange = self._prepare(points, metric)
+        grid, yrange = self._prepare(points, metric, reset_range=transition)
         if transition:
             # 起点＝当前**正在显示**的形状（可能处于上一次变形中途），保证连续
             self._from_grid = self._blended_grid()
@@ -192,6 +227,60 @@ class TimeSeriesChart(QWidget):
         self._grid, self._yrange, self._thresholds = grid, yrange, thresholds
         self.update()
 
+    # ------------------------------ y 量程迟滞 -------------------------------
+
+    def _resolve_range(self, metric: Metric, lo: float, hi: float,
+                       reset: bool) -> Tuple[float, float]:
+        """决定本帧生效的 y 量程——**带迟滞**，这是曲线"不抖"的关键。
+
+        每帧按数据重算量程会让曲线一直抖：窗口边缘的数据点一进一出，量程上界就在
+        两个刻度之间来回跳（实测心率量程每帧波动 5bpm、曲线中点跳 10 像素）。
+        因此：
+          * 固定量程的指标直接用固定值；
+          * 自适应量程只在**必要时**才改：数据顶到边界（需要扩），或数据只占了
+            量程的一半以下（可以收）；其余情况维持现状，量程纹丝不动；
+          * 真要改时用 300ms 缓动过渡（_range_p），不是瞬间跳。
+        """
+        if metric.yrange is not None:
+            self._range_key = metric.key
+            self._range = metric.yrange
+            return metric.yrange
+
+        target = self._nice_range(lo, hi, metric.min_span, metric.bounds)
+        if reset or self._range is None or self._range_key != metric.key:
+            self._range_key = metric.key
+            self._range = target
+            self._range_from = None
+            self._range_p = 1.0
+            return target
+
+        cur = self._range
+        span_cur = cur[1] - cur[0]
+        need_expand = lo < cur[0] or hi > cur[1]                  # 数据超出当前量程
+        need_shrink = (hi - lo) < 0.5 * span_cur and target != cur  # 量程明显过大
+        if need_expand or need_shrink:
+            self._range_from = self._displayed_range()
+            self._range = target
+            self._range_p = 0.0
+            animate(self, "_anim_range", 0.0, 1.0, theme.ANIM_SLOW, self._on_range)
+        return self._displayed_range()
+
+    def _displayed_range(self) -> Tuple[float, float]:
+        """量程切换过程中的插值结果（缓动，不跳变）。"""
+        if self._range is None:
+            return (0.0, 1.0)
+        if self._range_from is None or self._range_p >= 1.0:
+            return self._range
+        (a0, a1), (b0, b1) = self._range_from, self._range
+        p = self._range_p
+        return (a0 + (b0 - a0) * p, a1 + (b1 - a1) * p)
+
+    def _on_range(self, v) -> None:
+        self._range_p = float(v)
+        if self._range_p >= 1.0:
+            self._range_from = None
+        self.update()
+
     def _on_morph(self, v) -> None:
         self._p = float(v)
         if self._p >= 1.0:
@@ -200,19 +289,28 @@ class TimeSeriesChart(QWidget):
             self._from_th = None
         self.update()
 
-    def _prepare(self, points, metric: Metric):
+    def _prepare(self, points, metric: Metric, reset_range: bool = False):
         """(ts,value) 序列 → 均匀网格上的归一化 y（0..1）+ y 轴范围。
 
-        三步：① 按时间重采样到 _GRID_N 个等距点（线性插值）；② 慢指标做滑动平均
-        （每秒才更新一次的量在每帧被重复写入，原样画出来就是台阶）；③ 按 y 范围归一化。
+        三步：① 按时间重采样到 _GRID_N 个等距点（线性插值）；② 慢指标做两遍滑动
+        平均（每秒才更新一次的量在每帧被重复写入，原样画出来就是台阶）；③ 归一化。
+
+        **网格锚在固定时间格上**（关键）：若把网格锚在"最新帧的时间戳"上，它每帧
+        前进 0.05s，同一个屏幕位置每帧代表的时间都不同 → 曲线不是平移，而是原地
+        重画，看起来一直在颤（实测每帧抖 1.4 像素）。改为把网格对齐到 step 的整数倍
+        时间格：格点上的值一旦算出就不再变，曲线成为**刚体**；再把整条曲线按不足
+        一格的余量（_x_frac）整体左移，得到连续顺滑的滚动。
         """
         pts = [(t, v) for t, v in points if math.isfinite(v)]
         if len(pts) < 2:
+            self._x_frac = 0.0
             return [_NAN] * _GRID_N, (0.0, 1.0)
 
-        t_end = points[-1][0]
-        t_start = t_end - WINDOW_SEC
         step = WINDOW_SEC / (_GRID_N - 1)
+        t_now = points[-1][0]
+        t_end = math.floor(t_now / step) * step      # 固定时间格（相位不漂）
+        self._x_frac = (t_now - t_end) / step        # 不足一格的余量 → 绘制时整体左移
+        t_start = t_end - WINDOW_SEC
 
         # ① 重采样（pts 按时间递增，用游标线性插值）
         raw: List[float] = []
@@ -232,27 +330,60 @@ class TimeSeriesChart(QWidget):
             else:
                 raw.append(v0)
 
-        # ② 慢指标滑动平均（抹掉 1Hz 阶梯）
+        # ② 慢指标平滑：**两遍**滑动平均（= 三角窗低通）。
+        #    单遍平均把台阶变成折线，拐角依然生硬；两遍之后拐角变成 S 形，
+        #    才是真正"看起来连续"的曲线（计数类窗口更长，见 _COUNT）。
         if metric.smooth_sec > 0:
             k = max(1, int(round(metric.smooth_sec / step)))
-            raw = self._moving_average(raw, k)
+            raw = self._moving_average(self._moving_average(raw, k), k)
 
-        # ③ 归一化
+        # ③ 归一化（量程带迟滞，见 _resolve_range——这是曲线"不抖"的关键）
         finite = [v for v in raw if math.isfinite(v)]
         if not finite:
             return [_NAN] * _GRID_N, (0.0, 1.0)
-        if metric.yrange is not None:
-            y0, y1 = metric.yrange
-        else:
-            y0, y1 = min(finite), max(finite)
-            if y1 - y0 < 1e-9:
-                y0, y1 = y0 - 1.0, y1 + 1.0
-            pad = (y1 - y0) * 0.15
-            y0, y1 = y0 - pad, y1 + pad
+        y0, y1 = self._resolve_range(metric, min(finite), max(finite), reset_range)
         span = (y1 - y0) or 1.0
         grid = [(_NAN if not math.isfinite(v) else max(0.0, min(1.0, (v - y0) / span)))
                 for v in raw]
         return grid, (y0, y1)
+
+    @staticmethod
+    def _nice_range(lo: float, hi: float, min_span: Optional[float],
+                    bounds: Optional[Tuple[Optional[float], Optional[float]]]):
+        """自适应 y 量程：贴合数据但不"贴地"，且稳定不抖。
+
+        三件事：
+          * **最小跨度**：值很稳时若让量程紧贴数据，微小噪声会被放大成剧烈波动；
+            用 min_span 兜底（如心率至少 10bpm、PERCLOS 至少 15 个百分点）。
+          * **上下留白**：数据不贴边框，留 12% 呼吸空间。
+          * **量化到整齐刻度**（1/2/5×10^k）：否则量程随每帧数据微调，曲线会持续
+            轻微伸缩、看着发抖。刻度对齐后量程只在必要时整格跳变。
+        并按 bounds 裁到物理范围内（如 PERCLOS 不会出现负值/超过 100%）。
+        """
+        span = max(hi - lo, min_span or 0.0, 1e-6)
+        center = (lo + hi) / 2.0
+        lo2, hi2 = center - span / 2.0, center + span / 2.0
+        pad = span * 0.12
+        lo2, hi2 = lo2 - pad, hi2 + pad
+
+        # 量化：步长取 1/2/5 × 10^k（按四等分取，比二等分更贴合数据、不浪费高度），
+        # 让上下界落在整齐刻度上
+        raw_step = (hi2 - lo2) / 4.0
+        exp = math.floor(math.log10(raw_step)) if raw_step > 0 else 0
+        base = raw_step / (10 ** exp)
+        step = (1 if base <= 1 else 2 if base <= 2 else 5 if base <= 5 else 10) * (10 ** exp)
+        lo3 = math.floor(lo2 / step) * step
+        hi3 = math.ceil(hi2 / step) * step
+
+        if bounds:
+            b_lo, b_hi = bounds
+            if b_lo is not None:
+                lo3 = max(lo3, b_lo)
+            if b_hi is not None:
+                hi3 = min(hi3, b_hi)
+        if hi3 - lo3 < 1e-9:
+            hi3 = lo3 + (min_span or 1.0)
+        return lo3, hi3
 
     @staticmethod
     def _moving_average(values: List[float], k: int) -> List[float]:
@@ -358,17 +489,21 @@ class TimeSeriesChart(QWidget):
                            Qt.AlignLeft | Qt.AlignVCenter, label)
 
         # ---- 曲线（Catmull-Rom 平滑）+ 下方填充 ----
+        # 网格点的值锚在固定时间格上（不随帧漂移），整条曲线按不足一格的余量左移
+        # → 视觉上是**刚体在匀速滚动**，而不是每帧原地重画产生的颤动。
         step_x = pw / (_GRID_N - 1)
+        dx = -self._x_frac * step_x if self._p >= 1.0 else 0.0   # 变形动画期间不平移
         segments: List[List[QPointF]] = []
         cur: List[QPointF] = []
         for i, v in enumerate(grid):
             if math.isfinite(v):
-                cur.append(QPointF(left + i * step_x, sy(v)))
+                cur.append(QPointF(left + i * step_x + dx, sy(v)))
             elif cur:
                 segments.append(cur)
                 cur = []
         if cur:
             segments.append(cur)
+        p.setClipRect(QRect(left, top, pw, ph))     # 左移后不越界到 y 轴刻度区
 
         for seg in segments:
             if len(seg) < 2:
@@ -390,6 +525,7 @@ class TimeSeriesChart(QWidget):
             p.setPen(pen)
             p.setBrush(Qt.NoBrush)
             p.drawPath(path)
+        p.setClipping(False)                        # 恢复：坐标轴文字要画在绘图区外
 
         # ---- x 轴（只标两端，§5.4）----
         p.setPen(QColor(theme.TEXT_MUTE))
@@ -435,17 +571,27 @@ class TimeSeriesChart(QWidget):
 # ------------------------------- 列表控件 ------------------------------------
 
 class MetricRow(QWidget):
-    """指标行：名称 + 当前值；悬停 150ms、选中态 180ms 过渡（§7.1/§7.2）。"""
+    """指标行：名称 + 当前值；悬停/按下/选中态过渡（§7.1/§7.2）。
+
+    **底色只做"不透明度"渐变，绝不做"到透明色"的颜色插值。**
+    Qt 的 QColor 逐通道插值里，"透明"是 rgba(0,0,0,0) ——**透明的黑**；
+    从它插值到浅灰会中途经过 rgb(122,122,123)@50%，视觉上就是"深灰闪一下"
+    （用户实测反馈）。苹果的悬停填充也是恒定颜色 + 透明度淡入淡出，正是为了
+    避免这种跨色插值产生的脏中间色。因此这里：
+      * 填充色（悬停灰 / 按下深灰 / 选中蓝）只在**两个不透明色之间**插值——安全；
+      * 出现/消失一律走 alpha 0↔1。
+    """
 
     clicked = pyqtSignal(str)
-    _TRANSPARENT = QColor(0, 0, 0, 0)
 
     def __init__(self, metric: Metric, parent=None):
         super().__init__(parent)
         self.key = metric.key
         self._selectable = metric.chartable
         self._selected = False
-        self._bg = QColor(self._TRANSPARENT)
+        self._hovered = False
+        self._bg_color = QColor(theme.SURFACE_2)   # 当前填充色（始终不透明）
+        self._bg_alpha = 0.0                       # 当前填充不透明度 0..1
         self.setFixedHeight(44)
         if self._selectable:
             self.setCursor(Qt.PointingHandCursor)
@@ -459,6 +605,8 @@ class MetricRow(QWidget):
         self._set_name_color(QColor(theme.TEXT))
         self._set_value_color(QColor(theme.TEXT_DIM))
 
+    # ------------------------------ 文字颜色 ---------------------------------
+
     def _set_name_color(self, c: QColor) -> None:
         self._name_color = QColor(c)
         self._name.setStyleSheet(
@@ -470,19 +618,47 @@ class MetricRow(QWidget):
             "color:{}; font-size:14px; font-family:{}; background:transparent;".format(
                 c.name(), theme.MONO))
 
-    def _set_bg(self, c) -> None:
-        self._bg = QColor(c)
+    # ------------------------------ 底色驱动 ---------------------------------
+
+    def _set_alpha(self, v) -> None:
+        self._bg_alpha = float(v)
         self.update()
+
+    def _set_color(self, c) -> None:
+        self._bg_color = QColor(c)
+        self.update()
+
+    def _apply_bg(self, color: Optional[QColor], ms: int) -> None:
+        """把底色过渡到目标：color=None 表示淡出（保持当前色，只降 alpha）。"""
+        if color is None:
+            animate(self, "_a_alpha", self._bg_alpha, 0.0, ms, self._set_alpha)
+            return
+        if self._bg_alpha <= 0.01:
+            self._set_color(color)      # 不可见时直接换色，不会看到跳变
+        else:
+            # 两个不透明色之间插值（灰→蓝），不经过黑色，安全
+            animate(self, "_a_color", QColor(self._bg_color), color, ms, self._set_color)
+        animate(self, "_a_alpha", self._bg_alpha, 1.0, ms, self._set_alpha)
+
+    def _refresh_bg(self, ms: int) -> None:
+        """按当前状态（选中 > 悬停 > 无）决定底色；按下态由 mousePressEvent 直给。"""
+        if self._selected:
+            self._apply_bg(QColor(theme.SELECT_BG), ms)
+        elif self._hovered and self._selectable:
+            self._apply_bg(QColor(theme.SURFACE_2), ms)
+        else:
+            self._apply_bg(None, ms)
+
+    # ------------------------------ 状态切换 ---------------------------------
 
     def set_selected(self, selected: bool) -> None:
         if selected == self._selected:
             return
         self._selected = selected
-        bg_to = QColor(theme.SELECT_BG) if selected else QColor(self._TRANSPARENT)
         name_to = QColor(theme.SELECT_FG if selected else theme.TEXT)
         val_to = QColor(theme.SELECT_FG if selected else theme.TEXT_DIM)
         # 与曲线变形、大数字滚动同一时长，三者同起同止（§7.2）
-        animate(self, "_a_bg", QColor(self._bg), bg_to, theme.ANIM_BASE, self._set_bg)
+        self._refresh_bg(theme.ANIM_BASE)
         animate(self, "_a_nc", QColor(self._name_color), name_to, theme.ANIM_BASE,
                 self._set_name_color)
         animate(self, "_a_vc", QColor(self._value_color), val_to, theme.ANIM_BASE,
@@ -495,29 +671,38 @@ class MetricRow(QWidget):
                 self._set_value_color(c)
         self._value.setText(text)
 
+    # ------------------------------ 交互事件 ---------------------------------
+
     def enterEvent(self, event) -> None:
-        if self._selectable and not self._selected:
-            animate(self, "_a_bg", QColor(self._bg), QColor(theme.SURFACE_2),
-                    theme.ANIM_FAST, self._set_bg)
+        self._hovered = True
+        self._refresh_bg(theme.ANIM_FAST)
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
-        if not self._selected:
-            animate(self, "_a_bg", QColor(self._bg), QColor(self._TRANSPARENT),
-                    theme.ANIM_FAST, self._set_bg)
+        self._hovered = False
+        self._refresh_bg(theme.ANIM_FAST)
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:
         if self._selectable and event.button() == Qt.LeftButton:
+            # 按下：更深一档的灰，立即反馈（苹果列表行的按压态，不做缩放）
+            if not self._selected:
+                self._apply_bg(QColor(theme.TRACK), 80)
             self.clicked.emit(self.key)
         super().mousePressEvent(event)
 
+    def mouseReleaseEvent(self, event) -> None:
+        self._refresh_bg(theme.ANIM_FAST)
+        super().mouseReleaseEvent(event)
+
     def paintEvent(self, event) -> None:
-        if self._bg.alpha() > 0:
+        if self._bg_alpha > 0.004:
             p = QPainter(self)
             p.setRenderHint(QPainter.Antialiasing)
+            c = QColor(self._bg_color)
+            c.setAlphaF(max(0.0, min(1.0, self._bg_alpha)))
             p.setPen(Qt.NoPen)
-            p.setBrush(self._bg)
+            p.setBrush(c)
             p.drawRoundedRect(self.rect(), theme.RADIUS_CTRL, theme.RADIUS_CTRL)
             p.end()
         super().paintEvent(event)
